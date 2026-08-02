@@ -77,7 +77,7 @@ auth.post("/login", async (c) => {
   }
 
   const [user] = await db.select().from(users).where(eq(users.email, body.email)).limit(1);
-  if (!user || !(await verifyPassword(body.password, user.passwordHash))) {
+  if (!user?.passwordHash || !(await verifyPassword(body.password, user.passwordHash))) {
     return c.json({ error: "Invalid credentials" }, 401);
   }
 

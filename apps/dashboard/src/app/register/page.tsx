@@ -1,16 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { BrandLogo } from "@/components/Icon";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [orgName, setOrgName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -19,9 +19,9 @@ export default function RegisterPage() {
     setError("");
     setLoading(true);
     try {
-      const { token } = await api.register(email, password, name, orgName || undefined);
+      const { token } = await api.register(email, password, name);
       api.setToken(token);
-      router.push("/dashboard");
+      router.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -30,40 +30,62 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="container" style={{ maxWidth: 420, paddingTop: 80 }}>
-      <div className="card">
-        <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Create account</h1>
-        <p style={{ color: "var(--text-muted)", marginBottom: 24, fontSize: 14 }}>
-          Start delivering webhooks reliably
-        </p>
+    <div className="auth-shell">
+      <header className="auth-header">
+        <Link href="/" className="app-brand">
+          <BrandLogo />
+          Webhook Delivery
+        </Link>
+      </header>
 
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="label">Name</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+      <main className="auth-main">
+        <div className="auth-panel">
+          <div className="auth-brand-block">
+            <h1>Create account</h1>
+            <p>Start delivering webhooks in minutes. Email and password only.</p>
           </div>
-          <div className="form-group">
-            <label className="label">Email</label>
-            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          </div>
-          <div className="form-group">
-            <label className="label">Password</label>
-            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
-          </div>
-          <div className="form-group">
-            <label className="label">Organization name (optional)</label>
-            <input className="input" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="My Company" />
-          </div>
-          {error && <p className="error">{error}</p>}
-          <button className="btn btn-primary" type="submit" disabled={loading} style={{ width: "100%", marginTop: 8 }}>
-            {loading ? "Creating account..." : "Create account"}
-          </button>
-        </form>
 
-        <p style={{ marginTop: 24, fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>
-          Already have an account? <Link href="/login">Sign in</Link>
-        </p>
-      </div>
+          <form onSubmit={handleSubmit}>
+            {error && <div className="alert alert-danger">{error}</div>}
+            <div className="form-group">
+              <label className="label">Name</label>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" />
+            </div>
+            <div className="form-group">
+              <label className="label">Email</label>
+              <input
+                className="input"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+                placeholder="you@company.com"
+              />
+            </div>
+            <div className="form-group">
+              <label className="label">Password</label>
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={8}
+                autoComplete="new-password"
+                placeholder="At least 8 characters"
+              />
+            </div>
+            <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
+              {loading ? "Creating account..." : "Create account"}
+            </button>
+          </form>
+
+          <p className="auth-footer">
+            Already have an account? <Link href="/login">Sign in</Link>
+          </p>
+        </div>
+      </main>
     </div>
   );
 }

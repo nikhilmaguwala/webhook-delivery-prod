@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard/
+Disallow: /invite/
+
+Sitemap: https://webhook-master-nikhil.vercel.app/sitemap.xml

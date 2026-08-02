@@ -20,6 +20,8 @@ export interface Project {
   description: string | null;
   organizationId: string;
   createdAt: string;
+  access?: string;
+  shared?: boolean;
 }
 
 export interface Endpoint {
@@ -72,6 +74,49 @@ export interface Analytics {
   endpoint_health: Endpoint[];
 }
 
+export interface ProjectTeamMember {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: "creator" | "admin" | "member";
+  source: string;
+  joinedAt: string;
+  is_you: boolean;
+  can_remove: boolean;
+  can_change_role: boolean;
+}
+
+export interface ProjectAccessInfo {
+  role: "creator" | "admin" | "member";
+  can_manage: boolean;
+  can_manage_members: boolean;
+  is_creator: boolean;
+}
+
+export interface ProjectInvitation {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  createdAt: string;
+  invite_url: string;
+  expired: boolean;
+}
+
+export interface InvitationPreview {
+  email: string;
+  role: string;
+  expired: boolean;
+  accepted: boolean;
+  has_account: boolean;
+  project: {
+    id: string;
+    name: string;
+    description: string | null;
+  };
+}
+
 class ApiClient {
   private token: string | null = null;
 
@@ -91,14 +136,16 @@ class ApiClient {
     return this.token;
   }
 
-  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, options: RequestInit = {}, auth = true): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...(options.headers as Record<string, string>),
     };
 
-    const token = this.getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (auth) {
+      const token = this.getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
 
     const res = await fetch(`${API_URL}${path}`, { ...options, headers });
     const data = await res.json();
@@ -113,19 +160,25 @@ class ApiClient {
   register(email: string, password: string, name: string, organizationName?: string) {
     return this.request<{ token: string; user: User; organization: { id: string; name: string; slug: string } }>(
       "/v1/auth/register",
-      { method: "POST", body: JSON.stringify({ email, password, name, organization_name: organizationName }) }
+      { method: "POST", body: JSON.stringify({ email, password, name, organization_name: organizationName }) },
+      false
     );
   }
 
   login(email: string, password: string) {
-    return this.request<{ token: string; user: User }>("/v1/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    });
+    return this.request<{ token: string; user: User }>(
+      "/v1/auth/login",
+      { method: "POST", body: JSON.stringify({ email, password }) },
+      false
+    );
   }
 
   me() {
     return this.request<{ user: User; organizations: Organization[] }>("/v1/auth/me");
+  }
+
+  listProjects() {
+    return this.request<{ projects: Project[] }>("/v1/projects");
   }
 
   getProjects(orgId: string) {
@@ -137,6 +190,90 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ name, description }),
     });
+  }
+
+  getInvitation(token: string) {
+    return this.request<{ invitation: InvitationPreview }>(`/v1/invitations/${token}`, {}, false);
+  }
+
+  sendInviteOtp(token: string, options?: { resend?: boolean }) {
+    return this.request<{
+      message: string;
+      email: string;
+      delivered?: boolean;
+      provider?: string;
+      fallback_otp?: string;
+      resent?: boolean;
+    }>(`/v1/invitations/${token}/send-otp`, {
+      method: "POST",
+      body: JSON.stringify(options ?? {}),
+    }, false);
+  }
+
+  verifyInviteOtp(token: string, otp: string) {
+    return this.request<{ verified: boolean; verification_token: string; message: string }>(
+      `/v1/invitations/${token}/verify-otp`,
+      { method: "POST", body: JSON.stringify({ otp }) },
+      false
+    );
+  }
+
+  acceptInvitation(
+    token: string,
+    body?: { name?: string; password?: string; verification_token?: string }
+  ) {
+    return this.request<{ token: string; project_id: string; message: string }>(
+      `/v1/invitations/${token}/accept`,
+      { method: "POST", body: JSON.stringify(body ?? {}) },
+      false
+    );
+  }
+
+  inviteToProject(projectId: string, email: string, role: "admin" | "member" = "member") {
+    return this.request<{
+      invitation: { id: string; email: string; token: string; invite_url: string; expires_at?: string };
+      message: string;
+    }>(`/v1/projects/${projectId}/invitations`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    });
+  }
+
+  getProjectAccess(projectId: string) {
+    return this.request<{
+      access: ProjectAccessInfo;
+      roles: Record<string, string>;
+    }>(`/v1/projects/${projectId}/access`);
+  }
+
+  getProjectMembers(projectId: string) {
+    return this.request<{
+      your_access: ProjectAccessInfo;
+      roles: Record<string, string>;
+      members: ProjectTeamMember[];
+      invitations: ProjectInvitation[];
+    }>(`/v1/projects/${projectId}/members`);
+  }
+
+  updateProjectMemberRole(projectId: string, memberUserId: string, role: "admin" | "member") {
+    return this.request<{ member: { role: string } }>(`/v1/projects/${projectId}/members/${memberUserId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  removeProjectMember(projectId: string, memberUserId: string) {
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/projects/${projectId}/members/${memberUserId}`,
+      { method: "DELETE" }
+    );
+  }
+
+  revokeProjectInvitation(projectId: string, invitationId: string) {
+    return this.request<{ success: boolean }>(
+      `/v1/projects/${projectId}/invitations/${invitationId}`,
+      { method: "DELETE" }
+    );
   }
 
   getEndpoints(projectId: string) {

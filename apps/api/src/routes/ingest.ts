@@ -59,23 +59,27 @@ ingest.post("/events", async (c) => {
     .from(webhookEndpoints)
     .where(and(eq(webhookEndpoints.projectId, projectId), eq(webhookEndpoints.enabled, true)));
 
-  const deliveryRecords = await db
-    .insert(deliveries)
-    .values(
-      endpoints.map((ep) => ({
-        eventId: event.id,
-        endpointId: ep.id,
-        status: "pending" as const,
-        maxAttempts: MAX_RETRY_ATTEMPTS,
-      }))
-    )
-    .returning({ id: deliveries.id });
+  let deliveryRecords: { id: string }[] = [];
 
-  for (const delivery of deliveryRecords) {
-    await c.env.DELIVERY_QUEUE.send({
-      deliveryId: delivery.id,
-      attemptNumber: 1,
-    } satisfies QueueMessage);
+  if (endpoints.length > 0) {
+    deliveryRecords = await db
+      .insert(deliveries)
+      .values(
+        endpoints.map((ep) => ({
+          eventId: event.id,
+          endpointId: ep.id,
+          status: "pending" as const,
+          maxAttempts: MAX_RETRY_ATTEMPTS,
+        }))
+      )
+      .returning({ id: deliveries.id });
+
+    for (const delivery of deliveryRecords) {
+      await c.env.DELIVERY_QUEUE.send({
+        deliveryId: delivery.id,
+        attemptNumber: 1,
+      } satisfies QueueMessage);
+    }
   }
 
   return c.json(

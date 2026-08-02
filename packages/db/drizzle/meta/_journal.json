@@ -8,6 +8,20 @@
       "when": 1785681463686,
       "tag": "0000_broad_slayback",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785683100000,
+      "tag": "0001_clerk_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785685000000,
+      "tag": "0003_project_creator",
+      "breakpoints": true
     }
   ]
 }

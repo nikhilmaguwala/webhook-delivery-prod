@@ -41,7 +41,7 @@ export const apiKeyAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
-async function verifyJwt(token: string, secret: string): Promise<{ userId: string } | null> {
+export async function verifyJwt(token: string, secret: string): Promise<{ userId: string } | null> {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;

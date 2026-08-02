@@ -7,6 +7,13 @@ export interface Env {
   UPSTASH_REDIS_REST_TOKEN: string;
   ENVIRONMENT: string;
   DELIVERY_QUEUE: Queue;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  BREVO_API_KEY?: string;
+  BREVO_SMTP_LOGIN?: string;
+  BREVO_SMTP_KEY?: string;
+  BREVO_SENDER_EMAIL?: string;
+  BREVO_SENDER_NAME?: string;
 }
 
 export type AppVariables = {

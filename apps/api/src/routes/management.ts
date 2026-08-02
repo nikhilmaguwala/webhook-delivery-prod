@@ -21,6 +21,7 @@ import { and, count, desc, eq, gte, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getClientIp } from "../middleware/db";
 import { logAudit } from "../services/audit";
+import { canManageProject, getProjectAccess } from "../services/project-access";
 import type { AppEnv } from "../types";
 
 const management = new Hono<AppEnv>();
@@ -83,6 +84,7 @@ management.post("/organizations/:orgId/projects", async (c) => {
       name: body.name,
       slug: slugify(body.name),
       description: body.description ?? null,
+      createdBy: userId,
     })
     .returning();
 
@@ -103,8 +105,7 @@ management.get("/projects/:projectId/endpoints", async (c) => {
   const projectId = c.req.param("projectId");
   const db = c.get("db");
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
@@ -134,10 +135,12 @@ management.post("/projects/:projectId/endpoints", async (c) => {
   const db = c.get("db");
   const body = await c.req.json<{ url?: string; description?: string }>();
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await canManageProject(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
+
+  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!project) return c.json({ error: "Not found" }, 404);
 
   if (!body.url) {
     return c.json({ error: "url is required" }, 400);
@@ -186,15 +189,16 @@ management.patch("/endpoints/:endpointId", async (c) => {
 
   if (!endpoint) return c.json({ error: "Not found" }, 404);
 
+  if (!(await canManageProject(db, userId, endpoint.projectId))) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
   const [project] = await db
     .select()
     .from(projects)
     .where(eq(projects.id, endpoint.projectId))
     .limit(1);
-
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
-    return c.json({ error: "Forbidden" }, 403);
-  }
+  if (!project) return c.json({ error: "Not found" }, 404);
 
   const updates: Partial<typeof webhookEndpoints.$inferInsert> = { updatedAt: new Date() };
   if (body.enabled !== undefined) updates.enabled = body.enabled;
@@ -225,8 +229,7 @@ management.get("/projects/:projectId/api-keys", async (c) => {
   const projectId = c.req.param("projectId");
   const db = c.get("db");
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
@@ -253,10 +256,12 @@ management.post("/projects/:projectId/api-keys", async (c) => {
   const db = c.get("db");
   const body = await c.req.json<{ name?: string }>();
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await canManageProject(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
+
+  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!project) return c.json({ error: "Not found" }, 404);
 
   if (!body.name) {
     return c.json({ error: "name is required" }, 400);
@@ -290,10 +295,12 @@ management.delete("/api-keys/:keyId", async (c) => {
   const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
   if (!apiKey) return c.json({ error: "Not found" }, 404);
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, apiKey.projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await canManageProject(db, userId, apiKey.projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
+
+  const [project] = await db.select().from(projects).where(eq(projects.id, apiKey.projectId)).limit(1);
+  if (!project) return c.json({ error: "Not found" }, 404);
 
   await db.update(apiKeys).set({ revokedAt: new Date() }).where(eq(apiKeys.id, keyId));
 
@@ -316,8 +323,7 @@ management.get("/projects/:projectId/deliveries", async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "50"), 100);
   const status = c.req.query("status");
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
@@ -373,7 +379,7 @@ management.get("/deliveries/:deliveryId", async (c) => {
     .where(eq(deliveries.id, deliveryId))
     .limit(1);
 
-  if (!delivery || !(await verifyOrgAccess(db, userId, delivery.organizationId))) {
+  if (!delivery || !(await getProjectAccess(db, userId, delivery.projectId))) {
     return c.json({ error: "Not found" }, 404);
   }
 
@@ -416,6 +422,7 @@ management.post("/deliveries/:deliveryId/replay", async (c) => {
   const [delivery] = await db
     .select({
       delivery: deliveries,
+      projectId: projects.id,
       organizationId: projects.organizationId,
     })
     .from(deliveries)
@@ -424,7 +431,7 @@ management.post("/deliveries/:deliveryId/replay", async (c) => {
     .where(eq(deliveries.id, deliveryId))
     .limit(1);
 
-  if (!delivery || !(await verifyOrgAccess(db, userId, delivery.organizationId))) {
+  if (!delivery || !(await canManageProject(db, userId, delivery.projectId))) {
     return c.json({ error: "Not found" }, 404);
   }
 
@@ -464,8 +471,7 @@ management.get("/projects/:projectId/analytics", async (c) => {
   const days = Math.min(parseInt(c.req.query("days") || "7"), 30);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
@@ -500,6 +506,7 @@ management.get("/projects/:projectId/analytics", async (c) => {
       id: webhookEndpoints.id,
       url: webhookEndpoints.url,
       status: webhookEndpoints.status,
+      enabled: webhookEndpoints.enabled,
       consecutiveFailures: webhookEndpoints.consecutiveFailures,
       avgResponseTimeMs: webhookEndpoints.avgResponseTimeMs,
       lastSuccessAt: webhookEndpoints.lastSuccessAt,
@@ -558,8 +565,7 @@ management.get("/projects/:projectId/events", async (c) => {
   const db = c.get("db");
   const limit = Math.min(parseInt(c.req.query("limit") || "50"), 100);
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project || !(await verifyOrgAccess(db, userId, project.organizationId))) {
+  if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
 

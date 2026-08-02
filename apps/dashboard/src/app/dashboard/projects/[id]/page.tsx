@@ -3,22 +3,50 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { api, type Analytics, type Delivery, type Endpoint } from "@/lib/api";
+import { CopyButton, CopyableBlock } from "@/components/CopyButton";
+import { Icon } from "@/components/Icon";
+import { api, type Analytics, type Delivery, type Endpoint, type Project, type ProjectAccessInfo, type ProjectInvitation, type ProjectTeamMember } from "@/lib/api";
 
-type Tab = "overview" | "endpoints" | "deliveries" | "events" | "api-keys";
+type Tab = "overview" | "endpoints" | "deliveries" | "events" | "api-keys" | "members";
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     healthy: "badge-success",
     delivered: "badge-success",
+    enabled: "badge-success",
     degraded: "badge-warning",
     pending: "badge-neutral",
     delivering: "badge-neutral",
     unhealthy: "badge-danger",
     failed: "badge-danger",
     dead_lettered: "badge-danger",
+    disabled: "badge-danger",
   };
   return <span className={`badge ${map[status] || "badge-neutral"}`}>{status}</span>;
+}
+
+function RoleBadge({ role }: { role: string }) {
+  const map: Record<string, string> = {
+    creator: "role-badge role-creator",
+    admin: "role-badge role-admin",
+    member: "role-badge role-member",
+  };
+  const labels: Record<string, string> = {
+    creator: "Creator",
+    admin: "Admin",
+    member: "Member",
+  };
+  const icons: Record<string, string> = {
+    creator: "verified",
+    admin: "admin_panel_settings",
+    member: "person",
+  };
+  return (
+    <span className={map[role] || "role-badge role-member"}>
+      <Icon name={icons[role] || "person"} size={14} />
+      {labels[role] || role}
+    </span>
+  );
 }
 
 export default function ProjectPage() {
@@ -34,12 +62,32 @@ export default function ProjectPage() {
   const [newEndpointUrl, setNewEndpointUrl] = useState("");
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
+  const [newEndpointSecret, setNewEndpointSecret] = useState<string | null>(null);
   const [selectedDelivery, setSelectedDelivery] = useState<string | null>(null);
   const [deliveryDetail, setDeliveryDetail] = useState<Record<string, unknown> | null>(null);
+  const [members, setMembers] = useState<ProjectTeamMember[]>([]);
+  const [invitations, setInvitations] = useState<ProjectInvitation[]>([]);
+  const [roleHelp, setRoleHelp] = useState<Record<string, string>>({});
+  const [access, setAccess] = useState<ProjectAccessInfo | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
+
+  useEffect(() => {
+    api.getProjectAccess(projectId).then((data) => setAccess(data.access)).catch(() => {});
+    api.listProjects().then(({ projects }) => {
+      const found = projects.find((p) => p.id === projectId);
+      if (found) setProject(found);
+    }).catch(() => {});
+  }, [projectId]);
 
   useEffect(() => {
     loadTabData();
   }, [projectId, tab]);
+
+  const canManage = access?.can_manage ?? false;
 
   async function loadTabData() {
     setLoading(true);
@@ -59,6 +107,12 @@ export default function ProjectPage() {
       } else if (tab === "api-keys") {
         const { api_keys } = await api.getApiKeys(projectId);
         setApiKeys(api_keys);
+      } else if (tab === "members") {
+        const data = await api.getProjectMembers(projectId);
+        setMembers(data.members);
+        setInvitations(data.invitations);
+        setRoleHelp(data.roles);
+        setAccess(data.your_access);
       }
     } finally {
       setLoading(false);
@@ -67,7 +121,8 @@ export default function ProjectPage() {
 
   async function addEndpoint(e: React.FormEvent) {
     e.preventDefault();
-    await api.createEndpoint(projectId, newEndpointUrl);
+    const { endpoint } = await api.createEndpoint(projectId, newEndpointUrl);
+    if (endpoint.secret) setNewEndpointSecret(endpoint.secret);
     setNewEndpointUrl("");
     loadTabData();
   }
@@ -97,30 +152,71 @@ export default function ProjectPage() {
     loadTabData();
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "endpoints", label: "Endpoints" },
-    { id: "deliveries", label: "Deliveries" },
-    { id: "events", label: "Events" },
-    { id: "api-keys", label: "API Keys" },
+  async function inviteMember(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    try {
+      const { invitation } = await api.inviteToProject(projectId, inviteEmail, inviteRole);
+      setInviteUrl(invitation.invite_url);
+      setInviteEmail("");
+      loadTabData();
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  const tabs: { id: Tab; label: string; icon: string }[] = [
+    { id: "overview", label: "Overview", icon: "dashboard" },
+    { id: "endpoints", label: "Endpoints", icon: "hub" },
+    { id: "deliveries", label: "Deliveries", icon: "local_shipping" },
+    { id: "events", label: "Events", icon: "event" },
+    { id: "api-keys", label: "API Keys", icon: "key" },
+    { id: "members", label: "Members", icon: "group" },
   ];
 
   return (
     <>
-      <div style={{ marginBottom: 16 }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: "var(--text-muted)" }}>← Back to projects</Link>
+      <div className="project-header-bar">
+        <div className="project-header-top">
+          <div className="project-header-title">
+            <Link href="/dashboard" className="back-link" aria-label="Back to projects">
+              <Icon name="arrow_back" size={20} />
+            </Link>
+            <div>
+              <h1>{project?.name || "Project"}</h1>
+              {project?.slug && <span className="mono project-slug" style={{ fontSize: 13 }}>{project.slug}</span>}
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {access && <RoleBadge role={access.role} />}
+            <span className="mono" style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>{projectId.slice(0, 8)}…</span>
+            <CopyButton text={projectId} label="Copy ID" />
+          </div>
+        </div>
+
+        <div className="project-tabs-wrap">
+          <div className="tabs tabs-in-header">
+            {tabs.map((t) => (
+              <button key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+                <Icon name={t.icon} size={18} />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="tabs">
-        {tabs.map((t) => (
-          <button key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {!canManage && access && (
+        <div className="callout callout-info" style={{ marginBottom: 20 }}>
+          <strong>View-only access.</strong> You are a <RoleBadge role={access.role} /> on this project. Contact an admin to change settings or invite others.
+        </div>
+      )}
 
       {loading ? (
-        <p style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <div className="loading-inline">
+          <div className="spinner" />
+          <span>Loading...</span>
+        </div>
       ) : (
         <>
           {tab === "overview" && analytics && (
@@ -160,9 +256,9 @@ export default function ProjectPage() {
                     </thead>
                     <tbody>
                       {analytics.endpoint_health.map((ep) => (
-                        <tr key={ep.id}>
+                        <tr key={ep.id} className={ep.enabled === false ? "row-disabled" : undefined}>
                           <td className="mono" style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>{ep.url}</td>
-                          <td><StatusBadge status={ep.status} /></td>
+                          <td><StatusBadge status={ep.enabled === false ? "disabled" : ep.status} /></td>
                           <td>{ep.avgResponseTimeMs ? `${ep.avgResponseTimeMs}ms` : "—"}</td>
                           <td>{ep.consecutiveFailures}</td>
                         </tr>
@@ -176,9 +272,27 @@ export default function ProjectPage() {
 
           {tab === "endpoints" && (
             <div className="card">
-              <form onSubmit={addEndpoint} style={{ marginBottom: 24, display: "flex", gap: 8 }}>
-                <input className="input" placeholder="https://your-app.com/webhooks" value={newEndpointUrl} onChange={(e) => setNewEndpointUrl(e.target.value)} required style={{ flex: 1 }} />
-                <button className="btn btn-primary" type="submit">Add Endpoint</button>
+              {newEndpointSecret && (
+                <div className="secret-banner">
+                  <p style={{ fontWeight: 600, marginBottom: 8 }}>Save your signing secret — it won&apos;t be shown again:</p>
+                  <p style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 12 }}>
+                    Use this on <strong>your server</strong> to verify incoming webhooks. It is not used when sending events to our API — that uses your API key.
+                  </p>
+                  <CopyableBlock value={newEndpointSecret} />
+                  <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => setNewEndpointSecret(null)}>
+                    <Icon name="close" size={16} />
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              <form onSubmit={addEndpoint} className="form-row">
+                <input className="input" placeholder="https://your-app.com/webhooks" value={newEndpointUrl} onChange={(e) => setNewEndpointUrl(e.target.value)} required disabled={!canManage} />
+                {canManage && (
+                  <button className="btn btn-primary" type="submit">
+                    <Icon name="add" size={18} />
+                    Add Endpoint
+                  </button>
+                )}
               </form>
               <table className="table">
                 <thead>
@@ -191,14 +305,30 @@ export default function ProjectPage() {
                 </thead>
                 <tbody>
                   {endpoints.map((ep) => (
-                    <tr key={ep.id}>
-                      <td className="mono">{ep.url}</td>
-                      <td><StatusBadge status={ep.status} /></td>
-                      <td>{ep.enabled ? "Yes" : "No"}</td>
+                    <tr key={ep.id} className={ep.enabled ? undefined : "row-disabled"}>
                       <td>
-                        <button className="btn btn-secondary btn-sm" onClick={() => toggleEndpoint(ep.id, ep.enabled)}>
-                          {ep.enabled ? "Disable" : "Enable"}
-                        </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{ep.url}</span>
+                          <CopyButton text={ep.url} label="Copy" />
+                        </div>
+                      </td>
+                      <td><StatusBadge status={ep.enabled ? ep.status : "disabled"} /></td>
+                      <td>
+                        {ep.enabled ? (
+                          <span style={{ color: "var(--success)" }}>Enabled</span>
+                        ) : (
+                          <span className="text-danger">Disabled</span>
+                        )}
+                      </td>
+                      <td>
+                        {canManage ? (
+                          <button className="btn btn-secondary btn-sm" onClick={() => toggleEndpoint(ep.id, ep.enabled)}>
+                            <Icon name={ep.enabled ? "pause_circle" : "play_circle"} size={16} />
+                            {ep.enabled ? "Disable" : "Enable"}
+                          </button>
+                        ) : (
+                          <span style={{ color: "var(--text-muted)", fontSize: 13 }}>—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -231,8 +361,16 @@ export default function ProjectPage() {
                       <td>{d.lastResponseStatus ?? "—"}</td>
                       <td>{d.lastResponseTimeMs ? `${d.lastResponseTimeMs}ms` : "—"}</td>
                       <td style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-secondary btn-sm" onClick={() => viewDelivery(d.id)}>Inspect</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => replayDelivery(d.id)}>Replay</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => viewDelivery(d.id)}>
+                          <Icon name="search" size={16} />
+                          Inspect
+                        </button>
+                        {canManage && (
+                          <button className="btn btn-secondary btn-sm" onClick={() => replayDelivery(d.id)}>
+                            <Icon name="replay" size={16} />
+                            Replay
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -241,9 +379,15 @@ export default function ProjectPage() {
 
               {selectedDelivery && deliveryDetail && (
                 <div style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: 24 }}>
-                  <h3 style={{ marginBottom: 16 }}>Delivery Detail</h3>
+                  <div className="code-block-header">
+                    <h3>Delivery Detail</h3>
+                    <CopyButton text={JSON.stringify(deliveryDetail, null, 2)} label="Copy JSON" />
+                  </div>
                   <div className="code-block">{JSON.stringify(deliveryDetail, null, 2)}</div>
-                  <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => { setSelectedDelivery(null); setDeliveryDetail(null); }}>Close</button>
+                  <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => { setSelectedDelivery(null); setDeliveryDetail(null); }}>
+                    <Icon name="close" size={16} />
+                    Close
+                  </button>
                 </div>
               )}
             </div>
@@ -251,6 +395,23 @@ export default function ProjectPage() {
 
           {tab === "events" && (
             <div className="card">
+              {events.length === 0 ? (
+                <div className="empty-state" style={{ padding: "40px 16px" }}>
+                  <div className="empty-icon">
+                    <Icon name="event" size={48} />
+                  </div>
+                  <h3 style={{ marginBottom: 8 }}>No events yet</h3>
+                  <p style={{ color: "var(--on-surface-variant)", fontSize: 14, maxWidth: 480, margin: "0 auto 16px" }}>
+                    Send an event with your API key. Events appear here even if you have no endpoints configured.
+                  </p>
+                  <div className="code-block" style={{ textAlign: "left", maxWidth: 560, margin: "0 auto" }}>
+                    {`curl -X POST ${process.env.NEXT_PUBLIC_API_URL || "https://webhook-delivery-api.nikhilkmaguwala.workers.dev"}/v1/ingest/events \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"event_type":"test.event","payload":{"hello":"world"}}'`}
+                  </div>
+                </div>
+              ) : (
               <table className="table">
                 <thead>
                   <tr>
@@ -264,34 +425,58 @@ export default function ProjectPage() {
                   {events.map((ev) => (
                     <tr key={ev.id}>
                       <td>{ev.eventType}</td>
-                      <td className="mono" style={{ fontSize: 11 }}>{ev.id}</td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="mono" style={{ fontSize: 11 }}>{ev.id}</span>
+                          <CopyButton text={ev.id} label="Copy" />
+                        </div>
+                      </td>
                       <td>{new Date(ev.createdAt).toLocaleString()}</td>
                       <td>
                         <details>
                           <summary style={{ cursor: "pointer", fontSize: 13 }}>View payload</summary>
-                          <div className="code-block" style={{ marginTop: 8 }}>{JSON.stringify(ev.payload, null, 2)}</div>
+                          <div style={{ marginTop: 8 }}>
+                            <div className="code-block-header">
+                              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Payload</span>
+                              <CopyButton text={JSON.stringify(ev.payload, null, 2)} label="Copy JSON" />
+                            </div>
+                            <div className="code-block">{JSON.stringify(ev.payload, null, 2)}</div>
+                          </div>
                         </details>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
           )}
 
           {tab === "api-keys" && (
             <div className="card">
               {newKeyValue && (
-                <div style={{ background: "rgba(99, 102, 241, 0.1)", border: "1px solid var(--primary)", borderRadius: 8, padding: 16, marginBottom: 24 }}>
-                  <p style={{ fontWeight: 600, marginBottom: 8 }}>Save your API key — it won&apos;t be shown again:</p>
-                  <code className="mono">{newKeyValue}</code>
-                  <button className="btn btn-secondary btn-sm" style={{ marginTop: 12, display: "block" }} onClick={() => setNewKeyValue(null)}>Dismiss</button>
+                <div className="secret-banner">
+                  <p style={{ fontWeight: 600, marginBottom: 12 }}>Save your API key — it won&apos;t be shown again:</p>
+                  <CopyableBlock value={newKeyValue} />
+                  <CopyableBlock
+                    label="Example curl command"
+                    value={`curl -X POST ${process.env.NEXT_PUBLIC_API_URL || "https://webhook-delivery-api.nikhilkmaguwala.workers.dev"}/v1/ingest/events \\\n  -H "Authorization: Bearer ${newKeyValue}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"event_type":"test.event","payload":{"hello":"world"}}'`}
+                  />
+                  <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => setNewKeyValue(null)}>
+                    <Icon name="close" size={16} />
+                    Dismiss
+                  </button>
                 </div>
               )}
-              <form onSubmit={createKey} style={{ marginBottom: 24, display: "flex", gap: 8 }}>
-                <input className="input" placeholder="Key name (e.g. Production)" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} required style={{ flex: 1 }} />
-                <button className="btn btn-primary" type="submit">Create Key</button>
-              </form>
+              {canManage && (
+                <form onSubmit={createKey} className="form-row">
+                  <input className="input" placeholder="Key name (e.g. Production)" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} required />
+                  <button className="btn btn-primary" type="submit">
+                    <Icon name="key" size={18} />
+                    Create Key
+                  </button>
+                </form>
+              )}
               <table className="table">
                 <thead>
                   <tr>
@@ -310,14 +495,171 @@ export default function ProjectPage() {
                       <td>{new Date(key.createdAt).toLocaleDateString()}</td>
                       <td>{key.revokedAt ? <span className="badge badge-danger">Revoked</span> : <span className="badge badge-success">Active</span>}</td>
                       <td>
-                        {!key.revokedAt && (
-                          <button className="btn btn-danger btn-sm" onClick={async () => { await api.revokeApiKey(key.id); loadTabData(); }}>Revoke</button>
+                        {canManage && !key.revokedAt && (
+                          <button className="btn btn-danger btn-sm" onClick={async () => { await api.revokeApiKey(key.id); loadTabData(); }}>
+                            <Icon name="block" size={16} />
+                            Revoke
+                          </button>
                         )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {tab === "members" && (
+            <div className="card">
+              <div className="page-header" style={{ marginBottom: 20, padding: 0 }}>
+                <div>
+                  <h3 className="card-title" style={{ marginBottom: 4 }}>Team & roles</h3>
+                  <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
+                    The project creator is always an admin. Invited users can be <strong>Admin</strong> or <strong>Member</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="role-legend">
+                {Object.entries(roleHelp).map(([role, description]) => (
+                  <div key={role} className="role-legend-item">
+                    <RoleBadge role={role} />
+                    <span>{description}</span>
+                  </div>
+                ))}
+              </div>
+
+              {access?.can_manage_members && (
+                <>
+                  {inviteUrl && (
+                    <div className="secret-banner">
+                      <p style={{ fontWeight: 600, marginBottom: 8 }}>Copy this invite link and send it to your teammate:</p>
+                      <CopyableBlock value={inviteUrl} />
+                      <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => setInviteUrl(null)}>
+                        <Icon name="close" size={16} />
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+
+                  <form onSubmit={inviteMember} className="invite-form">
+                    <input
+                      className="input"
+                      type="email"
+                      placeholder="teammate@company.com"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      required
+                    />
+                    <select className="input" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as "admin" | "member")}>
+                      <option value="member">Member — view only</option>
+                      <option value="admin">Admin — full manage access</option>
+                    </select>
+                    <button className="btn btn-primary" type="submit" disabled={inviting}>
+                      <Icon name="link" size={18} />
+                      {inviting ? "Creating invite..." : "Create invite link"}
+                    </button>
+                  </form>
+                </>
+              )}
+
+              <h4 style={{ marginBottom: 12 }}>People with access</h4>
+              {members.length === 0 ? (
+                <p style={{ color: "var(--text-muted)", marginBottom: 24 }}>No members yet.</p>
+              ) : (
+                <div className="member-list" style={{ marginBottom: 24 }}>
+                  {members.map((m) => (
+                    <div key={m.id} className="member-row">
+                      <div className="member-info">
+                        <div className="member-name">
+                          {m.name}
+                          {m.is_you && (
+                            <span className="badge badge-neutral" style={{ marginLeft: 8 }}>
+                              <Icon name="account_circle" size={14} />
+                              You
+                            </span>
+                          )}
+                        </div>
+                        <div className="member-email">{m.email}</div>
+                        <div className="member-meta">
+                          Joined {m.role === "creator" ? "as creator" : new Date(m.joinedAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <div className="member-actions">
+                        {m.can_change_role ? (
+                          <select
+                            className="input input-sm"
+                            value={m.role}
+                            onChange={async (e) => {
+                              await api.updateProjectMemberRole(projectId, m.userId, e.target.value as "admin" | "member");
+                              loadTabData();
+                            }}
+                          >
+                            <option value="admin">Admin</option>
+                            <option value="member">Member</option>
+                          </select>
+                        ) : (
+                          <RoleBadge role={m.role} />
+                        )}
+                        {m.can_remove && (
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={async () => {
+                              if (!confirm(`Remove ${m.name}'s access to this project?`)) return;
+                              await api.removeProjectMember(projectId, m.userId);
+                              loadTabData();
+                            }}
+                          >
+                            <Icon name="person_remove" size={16} />
+                            Remove access
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <h4 style={{ marginBottom: 12 }}>Pending invitations</h4>
+              {invitations.length === 0 ? (
+                <p style={{ color: "var(--text-muted)" }}>No pending invites.</p>
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Email</th>
+                      <th>Role</th>
+                      <th>Status</th>
+                      <th>Invite link</th>
+                      {access?.can_manage_members && <th>Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invitations.map((inv) => (
+                      <tr key={inv.id}>
+                        <td>{inv.email}</td>
+                        <td><RoleBadge role={inv.role} /></td>
+                        <td>{inv.expired ? <span className="badge badge-danger">Expired</span> : <span className="badge badge-neutral">Pending</span>}</td>
+                        <td>{!inv.expired && <CopyButton text={inv.invite_url} label="Copy link" />}</td>
+                        {access?.can_manage_members && (
+                          <td>
+                            <button
+                              className="btn btn-danger btn-sm"
+                              onClick={async () => {
+                                await api.revokeProjectInvitation(projectId, inv.id);
+                                loadTabData();
+                              }}
+                            >
+                              <Icon name="block" size={16} />
+                              Revoke
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
         </>

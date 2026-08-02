@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type Organization, type Project } from "@/lib/api";
+import { api, type Project } from "@/lib/api";
+import { useDashboard } from "@/components/DashboardContext";
+import { Icon } from "@/components/Icon";
 
 export default function DashboardPage() {
-  const [orgs, setOrgs] = useState<Organization[]>([]);
+  const { orgId, canCreateProject } = useDashboard();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -18,13 +20,10 @@ export default function DashboardPage() {
   }, []);
 
   async function loadData() {
+    setLoading(true);
     try {
-      const me = await api.me();
-      setOrgs(me.organizations);
-      if (me.organizations[0]) {
-        const { projects: p } = await api.getProjects(me.organizations[0].organizationId);
-        setProjects(p);
-      }
+      const { projects: p } = await api.listProjects();
+      setProjects(p);
     } finally {
       setLoading(false);
     }
@@ -32,10 +31,10 @@ export default function DashboardPage() {
 
   async function createProject(e: React.FormEvent) {
     e.preventDefault();
-    if (!orgs[0]) return;
+    if (!orgId) return;
     setCreating(true);
     try {
-      await api.createProject(orgs[0].organizationId, newName, newDesc || undefined);
+      await api.createProject(orgId, newName, newDesc || undefined);
       setShowCreate(false);
       setNewName("");
       setNewDesc("");
@@ -45,52 +44,107 @@ export default function DashboardPage() {
     }
   }
 
-  if (loading) return <p style={{ color: "var(--text-muted)" }}>Loading projects...</p>;
+  if (loading) {
+    return (
+      <div className="loading-inline">
+        <div className="spinner" />
+        <span>Loading projects...</span>
+      </div>
+    );
+  }
 
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Projects</h1>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>New Project</button>
+        <div>
+          <h1 className="page-title">Projects</h1>
+          <p className="page-subtitle">
+            Manage webhook endpoints, deliveries, and team access across your projects.
+          </p>
+        </div>
+        {canCreateProject && (
+          <div className="page-header-actions">
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+              <Icon name="add" size={18} />
+              New Project
+            </button>
+          </div>
+        )}
       </div>
 
       {showCreate && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <h3 style={{ marginBottom: 16 }}>Create Project</h3>
+        <div className="card card-form">
+          <h3 className="card-title">Create project</h3>
           <form onSubmit={createProject}>
             <div className="form-group">
               <label className="label">Name</label>
-              <input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} required />
+              <input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} required placeholder="Production webhooks" />
             </div>
             <div className="form-group">
-              <label className="label">Description</label>
-              <input className="input" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
+              <label className="label">Description (optional)</label>
+              <input className="input" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="What is this project for?" />
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="form-actions">
               <button className="btn btn-primary" type="submit" disabled={creating}>
-                {creating ? "Creating..." : "Create"}
+                <Icon name="add" size={18} />
+                {creating ? "Creating..." : "Create project"}
               </button>
-              <button className="btn btn-secondary" type="button" onClick={() => setShowCreate(false)}>Cancel</button>
+              <button className="btn btn-secondary" type="button" onClick={() => setShowCreate(false)}>
+                <Icon name="close" size={18} />
+                Cancel
+              </button>
             </div>
           </form>
         </div>
       )}
 
-      {projects.length === 0 ? (
+      {projects.length === 0 && !showCreate ? (
         <div className="card empty-state">
-          <p>No projects yet. Create your first project to start sending webhooks.</p>
+          <div className="empty-icon">
+            <Icon name="inventory_2" size={48} />
+          </div>
+          <h3>No projects yet</h3>
+          <p style={{ color: "var(--on-surface-variant)", margin: "8px 0 24px" }}>
+            {canCreateProject ? "Create your first project to start sending webhooks." : "Ask a project owner to invite you."}
+          </p>
+          {canCreateProject && (
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+              <Icon name="add" size={18} />
+              Create project
+            </button>
+          )}
         </div>
       ) : (
-        <div className="grid-2">
+        <div className="project-grid">
           {projects.map((project) => (
-            <Link key={project.id} href={`/dashboard/projects/${project.id}`} className="card" style={{ display: "block" }}>
-              <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{project.name}</h3>
-              {project.description && (
-                <p style={{ color: "var(--text-muted)", fontSize: 14 }}>{project.description}</p>
-              )}
-              <p className="mono" style={{ color: "var(--text-muted)", marginTop: 12, fontSize: 12 }}>{project.slug}</p>
+            <Link key={project.id} href={`/dashboard/projects/${project.id}`} className="glass-card project-card">
+              <div className="project-card-top">
+                <div className="project-card-icon">
+                  <Icon name="webhook" size={22} />
+                </div>
+                {project.shared && <span className="badge badge-neutral">Shared</span>}
+              </div>
+              <h3>{project.name}</h3>
+              {project.description && <p className="project-desc">{project.description}</p>}
+              <div className="project-card-footer">
+                <div className="project-card-meta">
+                  <span className="mono project-slug">{project.slug}</span>
+                </div>
+                <div className="project-card-divider" />
+                <span className="project-card-link">
+                  Open project
+                  <Icon name="arrow_forward" size={16} />
+                </span>
+              </div>
             </Link>
           ))}
+          {canCreateProject && (
+            <button type="button" className="empty-state-card" onClick={() => setShowCreate(true)}>
+              <Icon name="add_circle" size={40} style={{ color: "var(--primary)", marginBottom: 16 }} />
+              <h3 style={{ fontWeight: 600, marginBottom: 8 }}>Create new project</h3>
+              <p style={{ fontSize: 14, color: "var(--on-surface-variant)" }}>Add another webhook delivery project</p>
+            </button>
+          )}
         </div>
       )}
     </>

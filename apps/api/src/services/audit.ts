@@ -9,7 +9,8 @@ type AuditAction =
   | "logout"
   | "replay"
   | "api_key_created"
-  | "api_key_revoked";
+  | "api_key_revoked"
+  | "project_invited";
 
 export async function logAudit(
   db: Database,
