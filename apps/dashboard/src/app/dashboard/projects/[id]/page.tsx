@@ -1,13 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { CopyButton, CopyableBlock } from "@/components/CopyButton";
 import { Icon } from "@/components/Icon";
-import { api, type Analytics, type Delivery, type Endpoint, type Project, type ProjectAccessInfo, type ProjectInvitation, type ProjectTeamMember } from "@/lib/api";
+import { PaginatedTable, type PaginationMeta, type SortOrder } from "@/components/PaginatedTable";
+import {
+  api,
+  type Analytics,
+  type Delivery,
+  type Endpoint,
+  type EventRecord,
+  type Project,
+  type ProjectAccessInfo,
+  type ProjectInvitation,
+  type ProjectTeamMember,
+} from "@/lib/api";
 
 type Tab = "overview" | "endpoints" | "deliveries" | "events" | "api-keys" | "members";
+
+type ListQueryState = {
+  page: number;
+  page_size: number;
+  sort: string;
+  order: SortOrder;
+  status?: string;
+  event_type?: string;
+};
+
+function useDebouncedValue<T>(value: T, delayMs = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -56,7 +85,28 @@ export default function ProjectPage() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [events, setEvents] = useState<Array<{ id: string; eventType: string; payload: Record<string, unknown>; createdAt: string }>>([]);
+  const [deliveryPagination, setDeliveryPagination] = useState<PaginationMeta | null>(null);
+  const [deliverySearch, setDeliverySearch] = useState("");
+  const [deliveryQuery, setDeliveryQuery] = useState<ListQueryState>({
+    page: 1,
+    page_size: 25,
+    sort: "created_at",
+    order: "desc",
+    status: "",
+  });
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const debouncedDeliverySearch = useDebouncedValue(deliverySearch);
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [eventPagination, setEventPagination] = useState<PaginationMeta | null>(null);
+  const [eventSearch, setEventSearch] = useState("");
+  const [eventQuery, setEventQuery] = useState<ListQueryState>({
+    page: 1,
+    page_size: 25,
+    sort: "created_at",
+    order: "desc",
+  });
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const debouncedEventSearch = useDebouncedValue(eventSearch);
   const [apiKeys, setApiKeys] = useState<Array<{ id: string; name: string; keyPrefix: string; createdAt: string; revokedAt: string | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [newEndpointUrl, setNewEndpointUrl] = useState("");
@@ -87,9 +137,73 @@ export default function ProjectPage() {
     loadTabData();
   }, [projectId, tab]);
 
+  const loadDeliveries = useCallback(async () => {
+    setDeliveriesLoading(true);
+    try {
+      const data = await api.getDeliveries(projectId, {
+        page: deliveryQuery.page,
+        page_size: deliveryQuery.page_size,
+        search: debouncedDeliverySearch || undefined,
+        sort: deliveryQuery.sort,
+        order: deliveryQuery.order,
+        status: deliveryQuery.status || undefined,
+        event_type: deliveryQuery.event_type || undefined,
+      });
+      setDeliveries(data.deliveries);
+      setDeliveryPagination(data.pagination);
+    } finally {
+      setDeliveriesLoading(false);
+    }
+  }, [projectId, deliveryQuery, debouncedDeliverySearch]);
+
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true);
+    try {
+      const data = await api.getEvents(projectId, {
+        page: eventQuery.page,
+        page_size: eventQuery.page_size,
+        search: debouncedEventSearch || undefined,
+        sort: eventQuery.sort,
+        order: eventQuery.order,
+        event_type: eventQuery.event_type || undefined,
+      });
+      setEvents(data.events);
+      setEventPagination(data.pagination);
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [projectId, eventQuery, debouncedEventSearch]);
+
+  useEffect(() => {
+    if (tab === "deliveries") loadDeliveries();
+  }, [tab, loadDeliveries]);
+
+  useEffect(() => {
+    if (tab === "events") loadEvents();
+  }, [tab, loadEvents]);
+
+  function handleDeliverySort(column: string) {
+    setDeliveryQuery((q) => ({
+      ...q,
+      page: 1,
+      sort: column,
+      order: q.sort === column && q.order === "desc" ? "asc" : "desc",
+    }));
+  }
+
+  function handleEventSort(column: string) {
+    setEventQuery((q) => ({
+      ...q,
+      page: 1,
+      sort: column,
+      order: q.sort === column && q.order === "desc" ? "asc" : "desc",
+    }));
+  }
+
   const canManage = access?.can_manage ?? false;
 
   async function loadTabData() {
+    if (tab === "deliveries" || tab === "events") return;
     setLoading(true);
     try {
       if (tab === "overview") {
@@ -98,12 +212,6 @@ export default function ProjectPage() {
       } else if (tab === "endpoints") {
         const { endpoints: eps } = await api.getEndpoints(projectId);
         setEndpoints(eps);
-      } else if (tab === "deliveries") {
-        const { deliveries: dels } = await api.getDeliveries(projectId);
-        setDeliveries(dels);
-      } else if (tab === "events") {
-        const { events: evs } = await api.getEvents(projectId);
-        setEvents(evs);
       } else if (tab === "api-keys") {
         const { api_keys } = await api.getApiKeys(projectId);
         setApiKeys(api_keys);
@@ -149,7 +257,7 @@ export default function ProjectPage() {
   async function replayDelivery(id: string) {
     await api.replayDelivery(id);
     alert("Delivery replay queued");
-    loadTabData();
+    loadDeliveries();
   }
 
   async function inviteMember(e: React.FormEvent) {
@@ -212,7 +320,7 @@ export default function ProjectPage() {
         </div>
       )}
 
-      {loading ? (
+      {loading && tab !== "deliveries" && tab !== "events" ? (
         <div className="loading-inline">
           <div className="spinner" />
           <span>Loading...</span>
@@ -339,28 +447,54 @@ export default function ProjectPage() {
 
           {tab === "deliveries" && (
             <div className="card">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Event</th>
-                    <th>Endpoint</th>
-                    <th>Status</th>
-                    <th>Attempts</th>
-                    <th>Response</th>
-                    <th>Time</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deliveries.map((d) => (
-                    <tr key={d.id}>
-                      <td className="mono">{d.eventType}</td>
-                      <td className="mono" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{d.endpointUrl}</td>
-                      <td><StatusBadge status={d.status} /></td>
-                      <td>{d.attemptCount}</td>
-                      <td>{d.lastResponseStatus ?? "—"}</td>
-                      <td>{d.lastResponseTimeMs ? `${d.lastResponseTimeMs}ms` : "—"}</td>
-                      <td style={{ display: "flex", gap: 4 }}>
+              <PaginatedTable
+                columns={[
+                  {
+                    id: "event_type",
+                    label: "Event",
+                    sortable: true,
+                    render: (d) => <span className="mono">{d.eventType}</span>,
+                  },
+                  {
+                    id: "endpoint_url",
+                    label: "Endpoint",
+                    sortable: true,
+                    className: "mono",
+                    render: (d) => (
+                      <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
+                        {d.endpointUrl}
+                      </span>
+                    ),
+                  },
+                  {
+                    id: "status",
+                    label: "Status",
+                    sortable: true,
+                    render: (d) => <StatusBadge status={d.status} />,
+                  },
+                  {
+                    id: "attempt_count",
+                    label: "Attempts",
+                    sortable: true,
+                    render: (d) => d.attemptCount,
+                  },
+                  {
+                    id: "last_response_status",
+                    label: "Response",
+                    sortable: true,
+                    render: (d) => d.lastResponseStatus ?? "—",
+                  },
+                  {
+                    id: "last_response_time_ms",
+                    label: "Time",
+                    sortable: true,
+                    render: (d) => (d.lastResponseTimeMs ? `${d.lastResponseTimeMs}ms` : "—"),
+                  },
+                  {
+                    id: "actions",
+                    label: "Actions",
+                    render: (d) => (
+                      <div style={{ display: "flex", gap: 4 }}>
                         <button className="btn btn-secondary btn-sm" onClick={() => viewDelivery(d.id)}>
                           <Icon name="search" size={16} />
                           Inspect
@@ -371,11 +505,44 @@ export default function ProjectPage() {
                             Replay
                           </button>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                    ),
+                  },
+                ]}
+                rows={deliveries}
+                rowKey={(d) => d.id}
+                pagination={deliveryPagination}
+                loading={deliveriesLoading}
+                emptyTitle="No deliveries found"
+                emptyDescription={
+                  deliverySearch || deliveryQuery.status
+                    ? "Try adjusting your search or filters."
+                    : "Deliveries appear here when events are sent to your endpoints."
+                }
+                searchValue={deliverySearch}
+                searchPlaceholder="Search event type, endpoint, ID, error…"
+                onSearchChange={(value) => {
+                  setDeliverySearch(value);
+                  setDeliveryQuery((q) => ({ ...q, page: 1 }));
+                }}
+                sort={deliveryQuery.sort}
+                order={deliveryQuery.order}
+                onSortChange={handleDeliverySort}
+                onPageChange={(page) => setDeliveryQuery((q) => ({ ...q, page }))}
+                pageSize={deliveryQuery.page_size}
+                onPageSizeChange={(page_size) => setDeliveryQuery((q) => ({ ...q, page: 1, page_size }))}
+                filterLabel="Status"
+                filterValue={deliveryQuery.status || ""}
+                filterOptions={[
+                  { value: "", label: "All statuses" },
+                  { value: "pending", label: "Pending" },
+                  { value: "delivering", label: "Delivering" },
+                  { value: "delivered", label: "Delivered" },
+                  { value: "failed", label: "Failed" },
+                  { value: "dead_lettered", label: "Dead lettered" },
+                ]}
+                onFilterChange={(status) => setDeliveryQuery((q) => ({ ...q, page: 1, status }))}
+              />
 
               {selectedDelivery && deliveryDetail && (
                 <div style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: 24 }}>
@@ -395,7 +562,7 @@ export default function ProjectPage() {
 
           {tab === "events" && (
             <div className="card">
-              {events.length === 0 ? (
+              {!eventsLoading && eventPagination?.total === 0 && !eventSearch ? (
                 <div className="empty-state" style={{ padding: "40px 16px" }}>
                   <div className="empty-icon">
                     <Icon name="event" size={48} />
@@ -412,27 +579,35 @@ export default function ProjectPage() {
                   </div>
                 </div>
               ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>ID</th>
-                    <th>Created</th>
-                    <th>Payload</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {events.map((ev) => (
-                    <tr key={ev.id}>
-                      <td>{ev.eventType}</td>
-                      <td>
+                <PaginatedTable
+                  columns={[
+                    {
+                      id: "event_type",
+                      label: "Type",
+                      sortable: true,
+                      render: (ev) => ev.eventType,
+                    },
+                    {
+                      id: "id",
+                      label: "ID",
+                      sortable: true,
+                      render: (ev) => (
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span className="mono" style={{ fontSize: 11 }}>{ev.id}</span>
                           <CopyButton text={ev.id} label="Copy" />
                         </div>
-                      </td>
-                      <td>{new Date(ev.createdAt).toLocaleString()}</td>
-                      <td>
+                      ),
+                    },
+                    {
+                      id: "created_at",
+                      label: "Created",
+                      sortable: true,
+                      render: (ev) => new Date(ev.createdAt).toLocaleString(),
+                    },
+                    {
+                      id: "payload",
+                      label: "Payload",
+                      render: (ev) => (
                         <details>
                           <summary style={{ cursor: "pointer", fontSize: 13 }}>View payload</summary>
                           <div style={{ marginTop: 8 }}>
@@ -443,11 +618,28 @@ export default function ProjectPage() {
                             <div className="code-block">{JSON.stringify(ev.payload, null, 2)}</div>
                           </div>
                         </details>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      ),
+                    },
+                  ]}
+                  rows={events}
+                  rowKey={(ev) => ev.id}
+                  pagination={eventPagination}
+                  loading={eventsLoading}
+                  emptyTitle="No events found"
+                  emptyDescription="Try adjusting your search."
+                  searchValue={eventSearch}
+                  searchPlaceholder="Search type, ID, idempotency key, payload…"
+                  onSearchChange={(value) => {
+                    setEventSearch(value);
+                    setEventQuery((q) => ({ ...q, page: 1 }));
+                  }}
+                  sort={eventQuery.sort}
+                  order={eventQuery.order}
+                  onSortChange={handleEventSort}
+                  onPageChange={(page) => setEventQuery((q) => ({ ...q, page }))}
+                  pageSize={eventQuery.page_size}
+                  onPageSizeChange={(page_size) => setEventQuery((q) => ({ ...q, page: 1, page_size }))}
+                />
               )}
             </div>
           )}

@@ -39,6 +39,51 @@ export interface Endpoint {
   secret?: string;
 }
 
+export interface PaginationMeta {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
+export interface PaginatedResponse<T> {
+  pagination: PaginationMeta;
+  filters?: Record<string, string | null>;
+}
+
+export interface EventRecord {
+  id: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+  idempotencyKey?: string | null;
+  createdAt: string;
+}
+
+export type ListQueryParams = {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  sort?: string;
+  order?: "asc" | "desc";
+  status?: string;
+  event_type?: string;
+};
+
+function buildQueryString(params: ListQueryParams): string {
+  const search = new URLSearchParams();
+  if (params.page) search.set("page", String(params.page));
+  if (params.page_size) search.set("page_size", String(params.page_size));
+  if (params.search) search.set("search", params.search);
+  if (params.sort) search.set("sort", params.sort);
+  if (params.order) search.set("order", params.order);
+  if (params.status) search.set("status", params.status);
+  if (params.event_type) search.set("event_type", params.event_type);
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
 export interface Delivery {
   id: string;
   status: string;
@@ -342,10 +387,12 @@ class ApiClient {
     return this.request<{ success: boolean }>(`/v1/api-keys/${keyId}`, { method: "DELETE" });
   }
 
-  getDeliveries(projectId: string, status?: string) {
-    const params = new URLSearchParams();
-    if (status) params.set("status", status);
-    return this.request<{ deliveries: Delivery[] }>(`/v1/projects/${projectId}/deliveries?${params}`);
+  getDeliveries(projectId: string, params: ListQueryParams = {}) {
+    return this.request<{
+      deliveries: Delivery[];
+      pagination: PaginationMeta;
+      filters: Record<string, string | null>;
+    }>(`/v1/projects/${projectId}/deliveries${buildQueryString(params)}`);
   }
 
   getDelivery(deliveryId: string) {
@@ -370,10 +417,12 @@ class ApiClient {
     return this.request<{ audit_logs: Array<Record<string, unknown>> }>(`/v1/organizations/${orgId}/audit-logs`);
   }
 
-  getEvents(projectId: string) {
-    return this.request<{ events: Array<{ id: string; eventType: string; payload: Record<string, unknown>; createdAt: string }> }>(
-      `/v1/projects/${projectId}/events`
-    );
+  getEvents(projectId: string, params: ListQueryParams = {}) {
+    return this.request<{
+      events: EventRecord[];
+      pagination: PaginationMeta;
+      filters: Record<string, string | null>;
+    }>(`/v1/projects/${projectId}/events${buildQueryString(params)}`);
   }
 }
 

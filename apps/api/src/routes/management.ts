@@ -20,9 +20,10 @@ import {
   slugify,
   type QueueMessage,
 } from "@webhook-delivery/shared";
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getClientIp } from "../middleware/db";
+import { buildPaginationMeta, parseListQuery } from "../lib/list-query";
 import { logAudit } from "../services/audit";
 import { canManageProject, getProjectAccess } from "../services/project-access";
 import { validateWebhookUrl } from "../lib/ssrf";
@@ -352,12 +353,68 @@ management.get("/projects/:projectId/deliveries", async (c) => {
   const userId = c.get("userId")!;
   const projectId = c.req.param("projectId");
   const db = c.get("db");
-  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 100);
-  const status = c.req.query("status");
+  const status = c.req.query("status")?.trim() || undefined;
+  const eventType = c.req.query("event_type")?.trim() || undefined;
+  const listQuery = parseListQuery(
+    {
+      page: c.req.query("page"),
+      page_size: c.req.query("page_size"),
+      search: c.req.query("search"),
+      sort: c.req.query("sort"),
+      order: c.req.query("order"),
+    },
+    {
+      defaultSort: "created_at",
+      allowedSorts: [
+        "created_at",
+        "status",
+        "event_type",
+        "attempt_count",
+        "last_response_status",
+        "last_response_time_ms",
+        "endpoint_url",
+      ],
+    }
+  );
 
   if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
+
+  const filters = [eq(events.projectId, projectId)];
+  if (status) {
+    filters.push(eq(deliveries.status, status as "pending" | "delivering" | "delivered" | "failed" | "dead_lettered"));
+  }
+  if (eventType) {
+    filters.push(ilike(events.eventType, eventType));
+  }
+  if (listQuery.search) {
+    const pattern = `%${listQuery.search}%`;
+    filters.push(
+      or(
+        ilike(events.eventType, pattern),
+        ilike(webhookEndpoints.url, pattern),
+        ilike(deliveries.id, pattern),
+        ilike(events.id, pattern),
+        ilike(deliveries.lastError, pattern)
+      )!
+    );
+  }
+
+  const whereClause = and(...filters);
+
+  const sortColumnMap = {
+    created_at: deliveries.createdAt,
+    status: deliveries.status,
+    event_type: events.eventType,
+    attempt_count: deliveries.attemptCount,
+    last_response_status: deliveries.lastResponseStatus,
+    last_response_time_ms: deliveries.lastResponseTimeMs,
+    endpoint_url: webhookEndpoints.url,
+  } as const;
+
+  const sortColumn = sortColumnMap[listQuery.sort as keyof typeof sortColumnMap] ?? deliveries.createdAt;
+  const orderBy = listQuery.order === "asc" ? asc(sortColumn) : desc(sortColumn);
 
   const deliverySelect = {
     id: deliveries.id,
@@ -375,20 +432,34 @@ management.get("/projects/:projectId/deliveries", async (c) => {
     endpointId: webhookEndpoints.id,
   };
 
+  const [totalRow] = await db
+    .select({ total: count() })
+    .from(deliveries)
+    .innerJoin(events, eq(deliveries.eventId, events.id))
+    .innerJoin(webhookEndpoints, eq(deliveries.endpointId, webhookEndpoints.id))
+    .where(whereClause);
+
   const deliveryList = await db
     .select(deliverySelect)
     .from(deliveries)
     .innerJoin(events, eq(deliveries.eventId, events.id))
     .innerJoin(webhookEndpoints, eq(deliveries.endpointId, webhookEndpoints.id))
-    .where(
-      status
-        ? and(eq(events.projectId, projectId), eq(deliveries.status, status as "pending" | "delivering" | "delivered" | "failed" | "dead_lettered"))
-        : eq(events.projectId, projectId)
-    )
-    .orderBy(desc(deliveries.createdAt))
-    .limit(limit);
+    .where(whereClause)
+    .orderBy(orderBy)
+    .limit(listQuery.pageSize)
+    .offset(listQuery.offset);
 
-  return c.json({ deliveries: deliveryList });
+  return c.json({
+    deliveries: deliveryList,
+    pagination: buildPaginationMeta(listQuery.page, listQuery.pageSize, Number(totalRow?.total ?? 0)),
+    filters: {
+      status: status ?? null,
+      event_type: eventType ?? null,
+      search: listQuery.search ?? null,
+      sort: listQuery.sort,
+      order: listQuery.order,
+    },
+  });
 });
 
 management.get("/deliveries/:deliveryId", async (c) => {
@@ -595,20 +666,82 @@ management.get("/projects/:projectId/events", async (c) => {
   const userId = c.get("userId")!;
   const projectId = c.req.param("projectId");
   const db = c.get("db");
-  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 100);
+  const eventType = c.req.query("event_type")?.trim() || undefined;
+  const listQuery = parseListQuery(
+    {
+      page: c.req.query("page"),
+      page_size: c.req.query("page_size"),
+      search: c.req.query("search"),
+      sort: c.req.query("sort"),
+      order: c.req.query("order"),
+    },
+    {
+      defaultSort: "created_at",
+      allowedSorts: ["created_at", "event_type", "id"],
+    }
+  );
 
   if (!(await getProjectAccess(db, userId, projectId))) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
-  const eventList = await db
-    .select()
-    .from(events)
-    .where(eq(events.projectId, projectId))
-    .orderBy(desc(events.createdAt))
-    .limit(limit);
+  const filters = [eq(events.projectId, projectId)];
+  if (eventType) {
+    filters.push(ilike(events.eventType, eventType));
+  }
+  if (listQuery.search) {
+    const pattern = `%${listQuery.search}%`;
+    filters.push(
+      or(
+        ilike(events.eventType, pattern),
+        ilike(events.id, pattern),
+        ilike(events.idempotencyKey, pattern),
+        sql`${events.payload}::text ilike ${pattern}`
+      )!
+    );
+  }
 
-  return c.json({ events: eventList });
+  const whereClause = and(...filters);
+
+  const sortColumnMap = {
+    created_at: events.createdAt,
+    event_type: events.eventType,
+    id: events.id,
+  } as const;
+
+  const sortColumn = sortColumnMap[listQuery.sort as keyof typeof sortColumnMap] ?? events.createdAt;
+  const orderBy = listQuery.order === "asc" ? asc(sortColumn) : desc(sortColumn);
+
+  const [totalRow] = await db
+    .select({ total: count() })
+    .from(events)
+    .where(whereClause);
+
+  const eventList = await db
+    .select({
+      id: events.id,
+      eventType: events.eventType,
+      payload: events.payload,
+      idempotencyKey: events.idempotencyKey,
+      metadata: events.metadata,
+      createdAt: events.createdAt,
+    })
+    .from(events)
+    .where(whereClause)
+    .orderBy(orderBy)
+    .limit(listQuery.pageSize)
+    .offset(listQuery.offset);
+
+  return c.json({
+    events: eventList,
+    pagination: buildPaginationMeta(listQuery.page, listQuery.pageSize, Number(totalRow?.total ?? 0)),
+    filters: {
+      event_type: eventType ?? null,
+      search: listQuery.search ?? null,
+      sort: listQuery.sort,
+      order: listQuery.order,
+    },
+  });
 });
 
 export default management;

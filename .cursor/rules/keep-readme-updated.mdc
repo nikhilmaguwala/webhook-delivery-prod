@@ -1,0 +1,34 @@
+---
+description: Keep README.md in sync when shipping user-facing features or API changes
+alwaysApply: true
+---
+
+# Keep README Updated
+
+When you add, change, or remove **user-facing** behavior, update `README.md` in the **same task** — do not wait for the user to ask.
+
+## Update README when you change
+
+- API routes, request/response shapes, query params, or auth flows
+- Dashboard features (tabs, filters, pagination, new pages)
+- Reliability behavior (retries, idempotency, limits, timeouts, security)
+- Deploy/env vars, local dev setup, or project structure
+- Third-party integrations (email, Redis, queues)
+
+## What to update
+
+1. **Quick start / feature bullets** — if onboarding or “what you get” changes
+2. **API reference tables** — new/changed endpoints and query params
+3. **Outbound headers / examples** — if webhook or client contracts change
+4. **Tech stack / project structure** — if layout or dependencies shift
+
+## Style
+
+- Match existing README tone: clear tables, curl examples, production URLs
+- Prefer concise bullets over long prose; remove stale claims
+- Do not document internal-only refactors unless they affect operators or users
+
+## Skip README updates for
+
+- Pure test changes, formatting, or refactors with no external behavior change
+- Typo fixes in code comments only

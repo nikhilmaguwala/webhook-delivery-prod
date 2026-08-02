@@ -22,7 +22,7 @@ Your App  →  POST /v1/ingest/events  →  Webhook Delivery API
                     ┌─────────────────────────┼─────────────────────────┐
                     ▼                         ▼                         ▼
               PostgreSQL (Neon)        Cloudflare Queue           Upstash Redis
-              events + deliveries      async workers              rate limits
+              events + deliveries      async workers              rate limits + OTP
                     │                         │
                     └─────────────┬───────────┘
                                   ▼
@@ -39,19 +39,35 @@ Your App  →  POST /v1/ingest/events  →  Webhook Delivery API
 | **E‑commerce** | Emit `order.created`, `payment.succeeded` — deliver to fulfillment, analytics, CRM without building retry logic |
 | **SaaS integrations** | Fan out one event to multiple customer webhook URLs per project |
 | **Internal microservices** | Decouple services: producer doesn’t need to know endpoint URLs or handle failures |
-| **Debugging webhooks** | Inspect payloads, response codes, latency, and **replay** failed deliveries from the dashboard |
+| **Debugging webhooks** | Search, filter, sort, and paginate thousands of events/deliveries; inspect payloads; **replay** failures |
 | **Team access** | Invite teammates to a **project** (not a whole org) with Admin or Member roles |
 | **Security** | HMAC-SHA256 on every delivery; API keys scoped per project; signing secrets per endpoint |
 
 ### What you get out of the box
 
+**Delivery pipeline**
+
 - **Retries** with exponential backoff (up to 5 attempts)
+- **Smart retry classification** — 4xx (except 408/429) are terminal; 5xx, timeouts, and network errors retry
 - **Dead-letter queue** for permanently failed deliveries
-- **Idempotency keys** to prevent duplicate events
+- **Atomic delivery claims** — no duplicate concurrent workers on the same delivery (stale lock recovery after 120s)
+- **10s delivery timeout** per outbound HTTP attempt
+- **Response body retention** — 2xx responses store no body; error bodies are redacted and capped at 2 KB
+
+**Ingestion & safety**
+
+- **Idempotency keys** (body field or `Idempotency-Key` header) with DB-level deduplication
+- **Zod validation** on ingest — 256 KB max body, payload depth/key limits, typed `event_type` + `payload`
+- **SSRF protection** on endpoint URLs
+
+**Dashboard & ops**
+
+- **Paginated events & deliveries** — search, status filter, column sort, adjustable page size (10–100)
 - **Endpoint health** — healthy / degraded / unhealthy / disabled
 - **Analytics** — success rate, avg response time, daily breakdown
 - **Audit logs** — who changed what
-- **Email OTP** on project invites (Brevo) so only the invited email can join
+- **Email OTP** on project invites and password reset (Brevo)
+- **Forgot password** — OTP verify flow from the dashboard login page
 
 ---
 
@@ -60,8 +76,10 @@ Your App  →  POST /v1/ingest/events  →  Webhook Delivery API
 ### 1. Create an account
 
 1. Open the [dashboard](https://webhook-master-nikhil.vercel.app/register)
-2. Register with **email + password** (no Google/GitHub)
+2. Register with **email + password**
 3. Create a **project** (e.g. “Production webhooks”)
+
+Forgot your password? Use **Forgot password** on the login page → email OTP → set a new password.
 
 ### 2. Add an endpoint
 
@@ -80,10 +98,10 @@ Your App  →  POST /v1/ingest/events  →  Webhook Delivery API
 curl -X POST https://webhook-delivery-api.nikhilkmaguwala.workers.dev/v1/ingest/events \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-123-created" \
   -d '{
     "event_type": "order.created",
-    "payload": { "order_id": "ord_123", "amount": 4999 },
-    "idempotency_key": "order-123-created"
+    "payload": { "order_id": "ord_123", "amount": 4999 }
   }'
 ```
 
@@ -98,9 +116,13 @@ Response (`202`):
 }
 ```
 
+Re-sending with the same idempotency key returns the original event (no duplicate deliveries queued).
+
 ### 5. Watch deliveries
 
-Dashboard → **Deliveries** — see status, attempts, response time. Click **Inspect** or **Replay** if needed.
+Dashboard → **Deliveries** — search by event type, endpoint, ID, or error; filter by status; sort columns; paginate through large histories. Click **Inspect** or **Replay** if needed.
+
+Dashboard → **Events** — same search/sort/pagination for ingested events (including payload text search).
 
 ---
 
@@ -136,7 +158,7 @@ Base URL: `https://webhook-delivery-api.nikhilkmaguwala.workers.dev`
 |------|--------|----------|
 | API key | `Authorization: Bearer whk_live_...` | Event ingestion |
 | JWT | `Authorization: Bearer <jwt>` | Dashboard / management |
-| None | — | Public invite preview + OTP |
+| None | — | Public invite preview + OTP, password reset |
 
 ### Endpoints
 
@@ -151,14 +173,21 @@ Base URL: `https://webhook-delivery-api.nikhilkmaguwala.workers.dev`
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/v1/auth/register` | — | Create account `{ email, password, name }` |
-| `POST` | `/v1/auth/login` | — | Sign in `{ email, password }` → JWT |
+| `POST` | `/v1/auth/login` | — | Sign in `{ email, password }` → JWT (case-insensitive email) |
 | `GET` | `/v1/auth/me` | JWT | Current user + organizations |
+| `POST` | `/v1/auth/forgot-password` | — | Send reset OTP `{ email, resend? }` |
+| `POST` | `/v1/auth/verify-reset-otp` | — | Verify `{ email, otp }` → `reset_token` |
+| `POST` | `/v1/auth/reset-password` | — | Set password `{ email, reset_token, password }` → JWT |
 
 #### Ingest (API key)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/v1/ingest/events` | API key | Publish event `{ event_type, payload, idempotency_key? }` |
+| `POST` | `/v1/ingest/events` | API key | Publish event `{ event_type, payload, idempotency_key?, metadata? }` |
+
+Optional header: `Idempotency-Key` (must match body `idempotency_key` if both are sent).
+
+**Limits:** 256 KB request body; 128 KB payload; 16 KB metadata; max depth 12; max 200 JSON keys.
 
 #### Invitations (public + JWT)
 
@@ -193,12 +222,51 @@ Base URL: `https://webhook-delivery-api.nikhilkmaguwala.workers.dev`
 | `GET` | `/v1/projects/:id/api-keys` | List API keys |
 | `POST` | `/v1/projects/:id/api-keys` | Create key `{ name }` |
 | `DELETE` | `/v1/api-keys/:id` | Revoke key |
-| `GET` | `/v1/projects/:id/events` | Ingested events |
-| `GET` | `/v1/projects/:id/deliveries` | Delivery list |
-| `GET` | `/v1/deliveries/:id` | Delivery detail |
+| `GET` | `/v1/projects/:id/events` | Paginated events (see query params below) |
+| `GET` | `/v1/projects/:id/deliveries` | Paginated deliveries (see query params below) |
+| `GET` | `/v1/deliveries/:id` | Delivery detail + attempts |
 | `POST` | `/v1/deliveries/:id/replay` | Re-queue delivery |
 | `GET` | `/v1/projects/:id/analytics` | Stats `?days=7` |
 | `GET` | `/v1/organizations/:orgId/audit-logs` | Audit trail |
+
+#### List query params (`/events` and `/deliveries`)
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `page` | `1` | Page number (1-based) |
+| `page_size` | `25` | Rows per page (max `100`) |
+| `search` | — | Free-text search (see below) |
+| `sort` | `created_at` | Column to sort by |
+| `order` | `desc` | `asc` or `desc` |
+| `status` | — | Deliveries only: `pending`, `delivering`, `delivered`, `failed`, `dead_lettered` |
+| `event_type` | — | Filter by exact event type (case-insensitive) |
+
+**Search fields**
+
+- **Events:** event type, event ID, idempotency key, payload JSON text
+- **Deliveries:** event type, endpoint URL, delivery ID, event ID, last error message
+
+**Sortable columns**
+
+- **Events:** `created_at`, `event_type`, `id`
+- **Deliveries:** `created_at`, `status`, `event_type`, `attempt_count`, `last_response_status`, `last_response_time_ms`, `endpoint_url`
+
+**Response shape:**
+
+```json
+{
+  "events": [ /* or "deliveries" */ ],
+  "pagination": {
+    "page": 1,
+    "page_size": 25,
+    "total": 1240,
+    "total_pages": 50,
+    "has_next": true,
+    "has_prev": false
+  },
+  "filters": { "search": null, "sort": "created_at", "order": "desc" }
+}
+```
 
 ### Outbound webhook headers
 
@@ -207,6 +275,7 @@ Every delivery to your endpoint includes:
 | Header | Description |
 |--------|-------------|
 | `X-Webhook-Id` | Event UUID |
+| `X-Webhook-Delivery-Id` | Delivery UUID (unique per endpoint attempt chain) |
 | `X-Webhook-Timestamp` | Unix timestamp |
 | `X-Webhook-Signature` | `sha256=<hmac-hex>` |
 | `X-Webhook-Attempt` | Attempt number (1-based) |
@@ -258,6 +327,16 @@ curl -s -X POST "$API/v1/invitations/$TOKEN/accept" \
   }'
 ```
 
+### Example: paginated deliveries
+
+```bash
+JWT="your-dashboard-jwt"
+PROJECT="project-uuid"
+
+curl -s "$API/v1/projects/$PROJECT/deliveries?page=2&page_size=50&status=failed&search=timeout&sort=created_at&order=desc" \
+  -H "Authorization: Bearer $JWT"
+```
+
 ---
 
 ## Tech stack
@@ -268,7 +347,7 @@ curl -s -X POST "$API/v1/invitations/$TOKEN/accept" \
 | API + queue worker | Cloudflare Workers + Queues |
 | Database | Neon PostgreSQL + Drizzle ORM |
 | Rate limiting + OTP cache | Upstash Redis |
-| Email (invite OTP) | Brevo REST API |
+| Email (invite + password reset OTP) | Brevo REST API |
 
 ---
 
@@ -283,6 +362,16 @@ cp apps/api/.dev.vars.example apps/api/.dev.vars
 pnpm db:migrate
 pnpm dev:api      # http://localhost:8787
 pnpm dev:dashboard # http://localhost:3000
+```
+
+### Tests
+
+```bash
+pnpm test                    # all packages
+cd apps/api && pnpm test     # API unit + integration
+
+# Integration tests require a local/dedicated TEST_DATABASE_URL —
+# they refuse to run against hosted production Neon/Supabase URLs.
 ```
 
 ### Deploy
@@ -336,7 +425,7 @@ cd apps/dashboard && npx vercel --prod
 | `JWT_SECRET` | Sessions + invite verification tokens |
 | `UPSTASH_REDIS_REST_URL` | Rate limits + OTP storage |
 | `UPSTASH_REDIS_REST_TOKEN` | Redis auth |
-| `BREVO_API_KEY` | Invite OTP emails |
+| `BREVO_API_KEY` | Invite + password reset OTP emails |
 | `BREVO_SENDER_EMAIL` | From address |
 | `BREVO_SENDER_NAME` | From name |
 
@@ -348,11 +437,14 @@ cd apps/dashboard && npx vercel --prod
 webhook-delivery-prod/
 ├── apps/
 │   ├── api/                 # Cloudflare Worker (REST + queue consumer)
-│   │   └── src/routes/      # auth, ingest, invitations, management
-│   └── dashboard/           # Next.js UI (Stitch design system)
+│   │   └── src/
+│   │       ├── routes/      # auth, ingest, invitations, management
+│   │       └── lib/         # ingest-event, delivery-claim, list-query
+│   └── dashboard/           # Next.js UI
+│       └── src/components/  # PaginatedTable, Icon, CopyButton, …
 ├── packages/
 │   ├── db/                  # Schema + migrations
-│   └── shared/              # Crypto, backoff, types
+│   └── shared/              # Crypto, backoff, retry classification, validation, limits
 └── README.md
 ```
 
@@ -369,6 +461,8 @@ webhook-delivery-prod/
 | 5 | ~8s |
 
 After 5 failures → dead-letter queue. Endpoints: **degraded** at 3 consecutive failures, **unhealthy** at 10.
+
+**Retry vs terminal:** HTTP **408**, **429**, and **5xx** are retried. Most **4xx** responses are terminal (no further retries). Network errors and timeouts are retried until max attempts.
 
 ---
 

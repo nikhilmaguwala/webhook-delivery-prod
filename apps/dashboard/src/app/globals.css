@@ -436,6 +436,79 @@ button { cursor: pointer; }
 .table tbody tr:hover td { background: var(--surface-hover); }
 .table tr.row-disabled td, .table tr.row-disabled .mono { color: var(--danger); }
 
+.paginated-table { display: flex; flex-direction: column; gap: 16px; }
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+.table-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+  padding: 0 12px;
+  background: var(--surface-container-low);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+}
+.table-search-wrap .material-symbols-outlined { color: var(--on-surface-variant); flex-shrink: 0; }
+.table-search {
+  flex: 1;
+  border: none !important;
+  background: transparent !important;
+  padding: 10px 0 !important;
+  min-width: 0;
+}
+.table-search:focus { outline: none; box-shadow: none; }
+.table-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+.table-filter select { min-width: 120px; padding: 8px 12px; }
+.table-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.table-sort-btn:hover, .table-sort-btn.active { color: var(--primary); }
+.table-loading {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--on-surface-variant);
+  font-size: 14px;
+}
+.table-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--surface-border);
+}
+.table-pagination-meta { font-size: 13px; color: var(--on-surface-variant); }
+.table-pagination-actions { display: flex; align-items: center; gap: 8px; }
+.table-pagination-page { font-size: 13px; color: var(--on-surface-variant); min-width: 100px; text-align: center; }
+
 /* Badges */
 .badge {
   display: inline-flex;
