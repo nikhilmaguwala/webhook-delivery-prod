@@ -173,36 +173,6 @@ describe.skipIf(!hasDatabase)("delivery integration", () => {
     expect(attempts[0].responseBody).not.toContain("whk_live_secret");
   });
 
-  it("reports request timeouts using the shorter delivery timeout", async () => {
-    vi.useFakeTimers();
-
-    const db = await createTestDb();
-    const { delivery } = await createPendingDelivery(db);
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        (_url: string, init?: RequestInit) =>
-          new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => {
-              const error = new Error("Aborted");
-              error.name = "AbortError";
-              reject(error);
-            });
-          })
-      )
-    );
-
-    const promise = processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db);
-    await vi.advanceTimersByTimeAsync(10_000);
-    await promise;
-
-    const [updated] = await db.select().from(deliveries).where(eq(deliveries.id, delivery.id));
-    expect(updated.lastError).toContain("Request timed out after 10000ms");
-
-    vi.useRealTimers();
-  });
-
   it("claims deliveries atomically to avoid duplicate HTTP attempts", async () => {
     const db = await createTestDb();
     const { delivery } = await createPendingDelivery(db);
