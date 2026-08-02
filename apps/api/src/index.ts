@@ -8,7 +8,7 @@ import ingestRoutes from "./routes/ingest";
 import invitationRoutes from "./routes/invitations";
 import managementRoutes from "./routes/management";
 import { processDelivery } from "./services/delivery";
-import type { AppEnv, Env } from "../types";
+import type { AppEnv, Env } from "./types";
 import type { QueueMessage } from "@webhook-delivery/shared";
 
 const app = new Hono<AppEnv>();
