@@ -1,0 +1,21 @@
+{
+  "name": "webhook-delivery",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Reliable webhook delivery platform",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @webhook-delivery/api dev",
+    "dev:dashboard": "pnpm --filter @webhook-delivery/dashboard dev",
+    "db:generate": "pnpm --filter @webhook-delivery/db generate",
+    "db:migrate": "pnpm --filter @webhook-delivery/db migrate",
+    "db:studio": "pnpm --filter @webhook-delivery/db studio",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
