@@ -287,13 +287,13 @@ pnpm dev:dashboard # http://localhost:3000
 
 ### Deploy
 
-**Automatic (recommended):** Push to `main` → CI runs → on success, **Deploy & Release** deploys API + dashboard and creates a GitHub Release (`v1.0.0-build.N`).
+**Automatic (recommended):** Push to `main` → CI runs → on success, **Deploy & Release** deploys the API to Cloudflare and creates a GitHub Release (`v1.0.0-build.N`). The **dashboard** deploys automatically via **Vercel GitHub integration** (root directory: `apps/dashboard`).
 
-**Manual:** Actions → **Deploy & Release** → **Run workflow**.
+**Manual API deploy:** Actions → **Deploy & Release** → **Run workflow**.
 
 #### GitHub Actions secrets
 
-Add these under **Settings → Secrets and variables → Actions**:
+Add these under **Settings → Secrets and variables → Actions** (API deploy only — dashboard is handled by Vercel):
 
 | Secret | Purpose |
 |--------|---------|
@@ -306,11 +306,17 @@ Add these under **Settings → Secrets and variables → Actions**:
 | `BREVO_API_KEY` | Invite OTP emails |
 | `BREVO_SENDER_EMAIL` | Email from address |
 | `BREVO_SENDER_NAME` | Email from name |
-| `VERCEL_TOKEN` | Vercel deploy token |
-| `VERCEL_ORG_ID` | Vercel team/org ID |
-| `VERCEL_PROJECT_ID` | Vercel dashboard project ID |
-| `NEXT_PUBLIC_API_URL` | Production API URL (for dashboard build) |
+| `NEXT_PUBLIC_API_URL` | Production API URL (for CI build + release notes) |
 | `NEXT_PUBLIC_SITE_URL` | (optional) Dashboard URL for release notes |
+
+#### Vercel environment variables
+
+Set these in the Vercel dashboard for the `dashboard` project (Production, Preview, Development):
+
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_API_URL` | Production API URL |
+| `NEXT_PUBLIC_SITE_URL` | Dashboard URL |
 
 **Manual deploy (local):**
 

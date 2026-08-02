@@ -79,34 +79,8 @@ jobs:
           BREVO_SENDER_EMAIL: ${{ secrets.BREVO_SENDER_EMAIL }}
           BREVO_SENDER_NAME: ${{ secrets.BREVO_SENDER_NAME }}
 
-  deploy-dashboard:
-    needs: deploy-api
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Deploy Dashboard to Vercel
-        run: npx vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: apps/dashboard
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-
   release:
-    needs: [deploy-api, deploy-dashboard]
+    needs: [deploy-api]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -141,4 +115,4 @@ jobs:
             **Commit:** `${{ steps.meta.outputs.short_sha }}`
             **Workflow run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-            Deployed automatically after CI passed on `main`.
+            Deployed automatically after CI passed on `main`. Dashboard deploys via Vercel Git integration.
