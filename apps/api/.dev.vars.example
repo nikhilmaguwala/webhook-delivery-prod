@@ -1,5 +1,6 @@
 DATABASE_URL=postgresql://user:password@host.neon.tech/neondb?sslmode=require
 JWT_SECRET=change-me-to-a-random-64-char-string
+ENVIRONMENT=development
 UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 

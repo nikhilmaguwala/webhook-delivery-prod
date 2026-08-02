@@ -73,4 +73,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @webhook-delivery/dashboard build
         env:
-          NEXT_PUBLIC_API_URL: https://api.example.com
+          NEXT_PUBLIC_API_URL: https://webhook-delivery-api.nikhilkmaguwala.workers.dev

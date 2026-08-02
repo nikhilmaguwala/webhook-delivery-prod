@@ -62,3 +62,5 @@ pnpm test:integration
 ```
 
 Never point `TEST_DATABASE_URL` at production Neon or shared databases.
+
+Integration tests call `TRUNCATE` on all tables. The test harness refuses hosted production URLs (including `*.neon.tech`) unless you explicitly set `ALLOW_REMOTE_TEST_DATABASE=true` — do not do this on production.

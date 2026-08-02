@@ -21,11 +21,35 @@ export function getTestDatabaseUrl(): string | undefined {
   return process.env.TEST_DATABASE_URL;
 }
 
+function assertSafeTestDatabase(url: string): void {
+  const lower = url.toLowerCase();
+
+  if (lower.includes("localhost") || lower.includes("127.0.0.1") || lower.includes("webhook_test")) {
+    return;
+  }
+
+  if (lower.includes("neon.tech") || lower.includes("supabase.co") || lower.includes("aws.neon")) {
+    throw new Error(
+      "Refusing to run destructive integration tests against a hosted production database. " +
+        "Set TEST_DATABASE_URL to a local Postgres instance or dedicated test database."
+    );
+  }
+
+  if (process.env.ALLOW_REMOTE_TEST_DATABASE !== "true") {
+    throw new Error(
+      "Refusing to run integration tests against a remote database. " +
+        "Use TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/webhook_test"
+    );
+  }
+}
+
 export async function createTestDb(): Promise<TestDatabase> {
   const url = getTestDatabaseUrl();
   if (!url) {
-    throw new Error("TEST_DATABASE_URL or DATABASE_URL is required for integration tests");
+    throw new Error("TEST_DATABASE_URL is required for integration tests");
   }
+
+  assertSafeTestDatabase(url);
 
   if (!pool) {
     pool = new pg.Pool({ connectionString: url });
@@ -50,6 +74,11 @@ async function runMigrations(client: pg.Pool): Promise<void> {
 }
 
 export async function resetDatabase(db: TestDatabase): Promise<void> {
+  const url = getTestDatabaseUrl();
+  if (url) {
+    assertSafeTestDatabase(url);
+  }
+
   await db.execute(sql`
     TRUNCATE TABLE
       dead_letter_queue,

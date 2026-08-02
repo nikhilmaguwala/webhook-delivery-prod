@@ -1,4 +1,5 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8787";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "https://webhook-delivery-api.nikhilkmaguwala.workers.dev";
 
 export interface User {
   id: string;
