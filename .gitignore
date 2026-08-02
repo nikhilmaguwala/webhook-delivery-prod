@@ -39,6 +39,3 @@ coverage/
 
 # Vercel
 .vercel
-
-# Drizzle
-packages/db/drizzle/meta/
