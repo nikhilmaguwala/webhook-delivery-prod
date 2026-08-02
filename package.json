@@ -15,7 +15,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:unit": "vitest run --exclude **/integration/**",
-    "test:integration": "vitest run apps/api/src/__tests__/integration"
+    "test:integration": "vitest run apps/api/src/__tests__/integration --pool=forks --maxWorkers=1"
   },
   "engines": {
     "node": ">=20"

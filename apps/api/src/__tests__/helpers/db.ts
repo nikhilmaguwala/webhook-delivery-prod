@@ -15,7 +15,7 @@ const migrationsDir = join(
 export type TestDatabase = Database;
 
 let pool: pg.Pool | null = null;
-let migrated = false;
+let migrationPromise: Promise<void> | null = null;
 
 export function getTestDatabaseUrl(): string | undefined {
   return process.env.TEST_DATABASE_URL;
@@ -33,17 +33,20 @@ export async function createTestDb(): Promise<TestDatabase> {
 
   const db = drizzle(pool, { schema }) as unknown as TestDatabase;
 
-  if (!migrated) {
-    await runMigrations(pool);
-    migrated = true;
-  }
+  await runMigrations(pool);
 
   return db;
 }
 
 async function runMigrations(client: pg.Pool): Promise<void> {
-  const db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder: migrationsDir });
+  if (!migrationPromise) {
+    migrationPromise = (async () => {
+      const db = drizzle(client, { schema });
+      await migrate(db, { migrationsFolder: migrationsDir });
+    })();
+  }
+
+  await migrationPromise;
 }
 
 export async function resetDatabase(db: TestDatabase): Promise<void> {
@@ -70,6 +73,6 @@ export async function closeTestDb(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = null;
-    migrated = false;
+    migrationPromise = null;
   }
 }
