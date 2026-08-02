@@ -287,6 +287,33 @@ pnpm dev:dashboard # http://localhost:3000
 
 ### Deploy
 
+**Automatic (recommended):** Push to `main` → CI runs → on success, **Deploy & Release** deploys API + dashboard and creates a GitHub Release (`v1.0.0-build.N`).
+
+**Manual:** Actions → **Deploy & Release** → **Run workflow**.
+
+#### GitHub Actions secrets
+
+Add these under **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+|--------|---------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare Workers deploy |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
+| `DATABASE_URL` | Neon PostgreSQL |
+| `JWT_SECRET` | Sessions + invite tokens |
+| `UPSTASH_REDIS_REST_URL` | Redis REST URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Redis REST token |
+| `BREVO_API_KEY` | Invite OTP emails |
+| `BREVO_SENDER_EMAIL` | Email from address |
+| `BREVO_SENDER_NAME` | Email from name |
+| `VERCEL_TOKEN` | Vercel deploy token |
+| `VERCEL_ORG_ID` | Vercel team/org ID |
+| `VERCEL_PROJECT_ID` | Vercel dashboard project ID |
+| `NEXT_PUBLIC_API_URL` | Production API URL (for dashboard build) |
+| `NEXT_PUBLIC_SITE_URL` | (optional) Dashboard URL for release notes |
+
+**Manual deploy (local):**
+
 ```bash
 # API (Cloudflare)
 cd apps/api && pnpm run deploy
