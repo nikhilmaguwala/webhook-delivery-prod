@@ -186,6 +186,11 @@ describe.skipIf(!hasDatabase)("delivery integration", () => {
     const db = await createTestDb();
     const { delivery } = await createPendingDelivery(db);
 
+    await db
+      .update(deliveries)
+      .set({ attemptCount: MAX_RETRY_ATTEMPTS - 1, status: "pending" })
+      .where(eq(deliveries.id, delivery.id));
+
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("error", { status: 500 }))
