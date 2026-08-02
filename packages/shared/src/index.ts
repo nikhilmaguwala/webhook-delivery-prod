@@ -33,6 +33,8 @@ export function isSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
+export { classifyDeliveryFailure, type DeliveryFailureClass } from "./retry-classification";
+
 export async function signPayload(
   payload: string,
   secret: string

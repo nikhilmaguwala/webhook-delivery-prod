@@ -1,7 +1,5 @@
-import { events, deliveries, webhookEndpoints } from "@webhook-delivery/db";
-import { MAX_RETRY_ATTEMPTS, type QueueMessage } from "@webhook-delivery/shared";
-import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { ingestEvent, resolveIdempotencyKey } from "../lib/ingest-event";
 import { validateIngestBody } from "../lib/validate-ingest";
 import type { AppEnv } from "../types";
 
@@ -24,67 +22,38 @@ ingest.post("/events", async (c) => {
   }
 
   const body = validation.data;
-
-  if (body.idempotency_key) {
-    const [existing] = await db
-      .select({ id: events.id })
-      .from(events)
-      .where(and(eq(events.projectId, projectId), eq(events.idempotencyKey, body.idempotency_key)))
-      .limit(1);
-
-    if (existing) {
-      return c.json({ id: existing.id, status: "duplicate" }, 200);
-    }
-  }
-
-  const [event] = await db
-    .insert(events)
-    .values({
-      projectId,
-      eventType: body.event_type,
-      payload: body.payload,
-      idempotencyKey: body.idempotency_key ?? null,
-      metadata: body.metadata ?? null,
-    })
-    .returning({ id: events.id, createdAt: events.createdAt });
-
-  const endpoints = await db
-    .select({ id: webhookEndpoints.id })
-    .from(webhookEndpoints)
-    .where(and(eq(webhookEndpoints.projectId, projectId), eq(webhookEndpoints.enabled, true)));
-
-  let deliveryRecords: { id: string }[] = [];
-
-  if (endpoints.length > 0) {
-    deliveryRecords = await db
-      .insert(deliveries)
-      .values(
-        endpoints.map((ep) => ({
-          eventId: event.id,
-          endpointId: ep.id,
-          status: "pending" as const,
-          maxAttempts: MAX_RETRY_ATTEMPTS,
-        }))
-      )
-      .returning({ id: deliveries.id });
-
-    for (const delivery of deliveryRecords) {
-      await c.env.DELIVERY_QUEUE.send({
-        deliveryId: delivery.id,
-        attemptNumber: 1,
-      } satisfies QueueMessage);
-    }
-  }
-
-  return c.json(
-    {
-      id: event.id,
-      event_type: body.event_type,
-      created_at: event.createdAt.toISOString(),
-      deliveries_queued: deliveryRecords.length,
-    },
-    202
+  const idempotencyKey = resolveIdempotencyKey(
+    body.idempotency_key,
+    c.req.header("Idempotency-Key")
   );
+
+  if (idempotencyKey && body.idempotency_key && c.req.header("Idempotency-Key")) {
+    const headerKey = c.req.header("Idempotency-Key")!.trim();
+    if (headerKey !== body.idempotency_key) {
+      return c.json({ error: "Idempotency-Key header does not match body idempotency_key" }, 400);
+    }
+  }
+
+  try {
+    const result = await ingestEvent(db, projectId, body, idempotencyKey, c.env.DELIVERY_QUEUE);
+
+    if (result.kind === "duplicate") {
+      return c.json({ id: result.eventId, status: "duplicate" }, 200);
+    }
+
+    return c.json(
+      {
+        id: result.eventId,
+        event_type: result.eventType,
+        created_at: result.createdAt.toISOString(),
+        deliveries_queued: result.deliveriesQueued,
+      },
+      202
+    );
+  } catch (error) {
+    console.error("Ingest failed:", error);
+    return c.json({ error: "Failed to ingest event" }, 500);
+  }
 });
 
 export default ingest;

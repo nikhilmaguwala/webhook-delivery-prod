@@ -102,6 +102,94 @@ describe.skipIf(!hasDatabase)("ingest integration", () => {
       .from(events)
       .where(eq(events.idempotencyKey, "idem-duplicate-001"));
     expect(eventsForKey).toHaveLength(1);
+    expect(queueMessages).toHaveLength(2);
+  });
+
+  it("accepts idempotency keys from the Idempotency-Key header", async () => {
+    const db = await createTestDb();
+    const fixture = await seedProjectFixture(db);
+
+    const first = await requestApp("/v1/ingest/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "header-idem-001",
+      },
+      body: JSON.stringify({
+        event_type: "invoice.created",
+        payload: { invoice_id: "inv_header" },
+      }),
+      env,
+    });
+
+    const second = await requestApp("/v1/ingest/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "header-idem-001",
+      },
+      body: JSON.stringify({
+        event_type: "invoice.created",
+        payload: { invoice_id: "inv_header" },
+      }),
+      env,
+    });
+
+    const firstBody = (await first.json()) as { id: string };
+    const secondBody = (await second.json()) as { id: string; status: string };
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(200);
+    expect(secondBody).toEqual({ id: firstBody.id, status: "duplicate" });
+
+    const event = await getEventByIdempotencyKey(db, fixture.projectId, "header-idem-001");
+    expect(event).toBeTruthy();
+    expect(queueMessages).toHaveLength(2);
+  });
+
+  it("does not enqueue duplicate deliveries for conflicting idempotency inserts", async () => {
+    const db = await createTestDb();
+    const fixture = await seedProjectFixture(db);
+
+    const payload = {
+      event_type: "payment.captured",
+      payload: { payment_id: "pay_1" },
+      idempotency_key: "idem-race-001",
+    };
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        requestApp("/v1/ingest/events", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${fixture.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          env,
+        })
+      )
+    );
+
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+    const created = responses.filter((response) => response.status === 202);
+    const duplicates = responses.filter((response) => response.status === 200);
+
+    expect(created).toHaveLength(1);
+    expect(duplicates).toHaveLength(4);
+    expect(new Set(bodies.map((body) => (body as { id: string }).id)).size).toBe(1);
+    expect(queueMessages).toHaveLength(2);
+
+    const eventsForKey = await db
+      .select()
+      .from(events)
+      .where(eq(events.idempotencyKey, "idem-race-001"));
+    expect(eventsForKey).toHaveLength(1);
+
+    const deliveryCount = await getDeliveryCountForEvent(db, eventsForKey[0].id);
+    expect(deliveryCount).toBe(2);
   });
 
   it("rejects invalid payloads", async () => {

@@ -7,14 +7,14 @@ import {
 } from "@webhook-delivery/db";
 import {
   calculateBackoff,
-  isSuccessStatus,
-  MAX_RETRY_ATTEMPTS,
+  classifyDeliveryFailure,
   signPayload,
   type QueueMessage,
   type WebhookPayload,
 } from "@webhook-delivery/shared";
 import { createDb, type Database } from "@webhook-delivery/db";
 import { eq } from "drizzle-orm";
+import { claimDelivery } from "../lib/delivery-claim";
 import { computeEndpointHealthStatus } from "../lib/endpoint-health";
 import { isRedirectStatus, validateWebhookUrl } from "../lib/ssrf";
 import type { Env } from "../types";
@@ -26,20 +26,8 @@ export async function processDelivery(
 ): Promise<void> {
   const db = dbOverride ?? createDb(env.DATABASE_URL);
 
-  const [delivery] = await db
-    .select({
-      id: deliveries.id,
-      eventId: deliveries.eventId,
-      endpointId: deliveries.endpointId,
-      attemptCount: deliveries.attemptCount,
-      maxAttempts: deliveries.maxAttempts,
-      status: deliveries.status,
-    })
-    .from(deliveries)
-    .where(eq(deliveries.id, message.deliveryId))
-    .limit(1);
-
-  if (!delivery || delivery.status === "delivered" || delivery.status === "dead_lettered") {
+  const delivery = await claimDelivery(db, message.deliveryId, message.attemptNumber);
+  if (!delivery) {
     return;
   }
 
@@ -80,6 +68,7 @@ export async function processDelivery(
     "Content-Type": "application/json",
     "User-Agent": "WebhookDelivery/1.0",
     "X-Webhook-Id": event.id,
+    "X-Webhook-Delivery-Id": delivery.id,
     "X-Webhook-Timestamp": timestamp,
     "X-Webhook-Signature": `sha256=${signature}`,
     "X-Webhook-Attempt": String(attemptNumber),
@@ -145,7 +134,7 @@ export async function processDelivery(
   }
 
   const responseTimeMs = Date.now() - startTime;
-  const success = responseStatus !== null && isSuccessStatus(responseStatus);
+  const failureClass = classifyDeliveryFailure(responseStatus, error);
 
   await db.insert(deliveryAttempts).values({
     deliveryId: delivery.id,
@@ -157,7 +146,7 @@ export async function processDelivery(
     requestHeaders,
   });
 
-  if (success) {
+  if (failureClass === "success") {
     const newAvg = endpoint.avgResponseTimeMs
       ? Math.round((endpoint.avgResponseTimeMs + responseTimeMs) / 2)
       : responseTimeMs;
@@ -191,6 +180,34 @@ export async function processDelivery(
 
   const newFailures = endpoint.consecutiveFailures + 1;
   const endpointStatus = computeEndpointHealthStatus(newFailures);
+  const lastError = error ?? `HTTP ${responseStatus}`;
+
+  if (failureClass === "terminal") {
+    await db
+      .update(deliveries)
+      .set({
+        status: "failed",
+        attemptCount: attemptNumber,
+        lastResponseStatus: responseStatus,
+        lastResponseBody: responseBody?.slice(0, 5000) ?? null,
+        lastResponseTimeMs: responseTimeMs,
+        lastError,
+        updatedAt: new Date(),
+      })
+      .where(eq(deliveries.id, delivery.id));
+
+    await db
+      .update(webhookEndpoints)
+      .set({
+        status: endpointStatus,
+        consecutiveFailures: newFailures,
+        lastFailureAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(webhookEndpoints.id, endpoint.id));
+
+    return;
+  }
 
   if (attemptNumber >= delivery.maxAttempts) {
     await db
@@ -201,14 +218,14 @@ export async function processDelivery(
         lastResponseStatus: responseStatus,
         lastResponseBody: responseBody?.slice(0, 5000) ?? null,
         lastResponseTimeMs: responseTimeMs,
-        lastError: error ?? `HTTP ${responseStatus}`,
+        lastError,
         updatedAt: new Date(),
       })
       .where(eq(deliveries.id, delivery.id));
 
     await db.insert(deadLetterQueue).values({
       deliveryId: delivery.id,
-      reason: error ?? `HTTP ${responseStatus} after ${attemptNumber} attempts`,
+      reason: lastError + ` after ${attemptNumber} attempts`,
       finalAttemptNumber: attemptNumber,
     });
 
@@ -236,7 +253,7 @@ export async function processDelivery(
       lastResponseStatus: responseStatus,
       lastResponseBody: responseBody?.slice(0, 5000) ?? null,
       lastResponseTimeMs: responseTimeMs,
-      lastError: error ?? `HTTP ${responseStatus}`,
+      lastError,
       updatedAt: new Date(),
     })
     .where(eq(deliveries.id, delivery.id));
@@ -251,10 +268,13 @@ export async function processDelivery(
     })
     .where(eq(webhookEndpoints.id, endpoint.id));
 
-  await env.DELIVERY_QUEUE.send({
-    deliveryId: delivery.id,
-    attemptNumber: attemptNumber + 1,
-  } satisfies QueueMessage, {
-    delaySeconds: Math.ceil(calculateBackoff(attemptNumber) / 1000),
-  });
+  await env.DELIVERY_QUEUE.send(
+    {
+      deliveryId: delivery.id,
+      attemptNumber: attemptNumber + 1,
+    } satisfies QueueMessage,
+    {
+      delaySeconds: Math.ceil(calculateBackoff(attemptNumber) / 1000),
+    }
+  );
 }

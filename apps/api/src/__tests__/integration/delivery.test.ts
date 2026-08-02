@@ -66,10 +66,8 @@ describe.skipIf(!hasDatabase)("delivery integration", () => {
     const db = await createTestDb();
     const { delivery } = await createPendingDelivery(db);
 
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("ok", { status: 200 }))
-    );
+    const fetchMock = vi.fn(async () => new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
 
     await processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db);
 
@@ -82,6 +80,11 @@ describe.skipIf(!hasDatabase)("delivery integration", () => {
       .where(eq(deliveryAttempts.deliveryId, delivery.id));
     expect(attempts).toHaveLength(1);
     expect(attempts[0].responseStatus).toBe(200);
+    expect(attempts[0].requestHeaders).toMatchObject({
+      "X-Webhook-Delivery-Id": delivery.id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [endpoint] = await db
       .select()
@@ -126,6 +129,57 @@ describe.skipIf(!hasDatabase)("delivery integration", () => {
     expect(updated.status).toBe("pending");
     expect(updated.lastError).toContain("network timeout");
     expect(queueMessages).toHaveLength(1);
+  });
+
+  it("fails permanently on non-retryable client errors", async () => {
+    const db = await createTestDb();
+    const { delivery } = await createPendingDelivery(db);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not found", { status: 404 }))
+    );
+
+    await processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db);
+
+    const [updated] = await db.select().from(deliveries).where(eq(deliveries.id, delivery.id));
+    expect(updated.status).toBe("failed");
+    expect(updated.lastResponseStatus).toBe(404);
+    expect(queueMessages).toHaveLength(0);
+  });
+
+  it("claims deliveries atomically to avoid duplicate HTTP attempts", async () => {
+    const db = await createTestDb();
+    const { delivery } = await createPendingDelivery(db);
+
+    const fetchMock = vi.fn(async () => new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Promise.all([
+      processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db),
+      processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const attempts = await db
+      .select()
+      .from(deliveryAttempts)
+      .where(eq(deliveryAttempts.deliveryId, delivery.id));
+    expect(attempts).toHaveLength(1);
+  });
+
+  it("ignores stale queue messages for already-processed attempts", async () => {
+    const db = await createTestDb();
+    const { delivery } = await createPendingDelivery(db);
+
+    const fetchMock = vi.fn(async () => new Response("error", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db);
+    await processDelivery({ deliveryId: delivery.id, attemptNumber: 1 }, env, db);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("dead-letters after maximum attempts", async () => {

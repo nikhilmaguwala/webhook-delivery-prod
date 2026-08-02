@@ -24,8 +24,15 @@ export function validateIngestBody(body: unknown): IngestValidationResult {
     return { ok: false, error: "payload is required and must be an object" };
   }
 
-  if (record.idempotency_key !== undefined && typeof record.idempotency_key !== "string") {
-    return { ok: false, error: "idempotency_key must be a string" };
+  if (record.idempotency_key !== undefined) {
+    if (typeof record.idempotency_key !== "string") {
+      return { ok: false, error: "idempotency_key must be a string" };
+    }
+    const trimmed = record.idempotency_key.trim();
+    if (trimmed.length === 0) {
+      return { ok: false, error: "idempotency_key must not be empty" };
+    }
+    record.idempotency_key = trimmed;
   }
 
   if (

@@ -43,6 +43,10 @@ describe("validateIngestBody", () => {
     ).toEqual({ ok: false, error: "idempotency_key must be a string" });
 
     expect(
+      validateIngestBody({ event_type: "x", payload: {}, idempotency_key: "   " })
+    ).toEqual({ ok: false, error: "idempotency_key must not be empty" });
+
+    expect(
       validateIngestBody({ event_type: "x", payload: {}, metadata: "bad" })
     ).toEqual({ ok: false, error: "metadata must be an object" });
   });
