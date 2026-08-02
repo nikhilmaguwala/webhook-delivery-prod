@@ -1,8 +1,7 @@
 import { deliveries, events, webhookEndpoints } from "@webhook-delivery/db";
 import type { Database } from "@webhook-delivery/db";
-import { MAX_RETRY_ATTEMPTS, type QueueMessage } from "@webhook-delivery/shared";
+import { MAX_RETRY_ATTEMPTS, type QueueMessage, type ValidatedIngestEvent } from "@webhook-delivery/shared";
 import { and, eq } from "drizzle-orm";
-import type { ValidatedIngestBody } from "./validate-ingest";
 
 export type IngestEventResult =
   | {
@@ -37,7 +36,7 @@ export function resolveIdempotencyKey(
 export async function ingestEvent(
   db: Database,
   projectId: string,
-  body: ValidatedIngestBody,
+  body: ValidatedIngestEvent,
   idempotencyKey: string | undefined,
   queue: QueueSender
 ): Promise<IngestEventResult> {

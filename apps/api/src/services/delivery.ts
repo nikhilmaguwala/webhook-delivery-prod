@@ -8,6 +8,9 @@ import {
 import {
   calculateBackoff,
   classifyDeliveryFailure,
+  executeWebhookFetch,
+  prepareStoredResponseBody,
+  sanitizeRequestHeaders,
   signPayload,
   type QueueMessage,
   type WebhookPayload,
@@ -86,7 +89,7 @@ export async function processDelivery(
       responseBody: null,
       responseTimeMs: 0,
       error: urlValidation.error,
-      requestHeaders: {},
+      requestHeaders: sanitizeRequestHeaders(requestHeaders),
     });
 
     await db
@@ -102,48 +105,27 @@ export async function processDelivery(
   }
 
   const startTime = Date.now();
-  let responseStatus: number | null = null;
-  let responseBody: string | null = null;
-  let error: string | null = null;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-
-    try {
-      const response = await fetch(urlValidation.normalizedUrl, {
-        method: "POST",
-        headers: requestHeaders,
-        body,
-        signal: controller.signal,
-        redirect: "manual",
-      });
-
-      responseStatus = response.status;
-      responseBody = await response.text().catch(() => null);
-
-      if (isRedirectStatus(response.status)) {
-        error = `Redirects are not followed (received HTTP ${response.status})`;
-        responseStatus = null;
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Unknown error";
-  }
+  const fetchResult = await executeWebhookFetch({
+    url: urlValidation.normalizedUrl,
+    headers: requestHeaders,
+    body,
+    isRedirectStatus,
+  });
 
   const responseTimeMs = Date.now() - startTime;
+  const { responseStatus, responseBody, error } = fetchResult;
   const failureClass = classifyDeliveryFailure(responseStatus, error);
+  const storedResponseBody = prepareStoredResponseBody(responseBody, responseStatus, failureClass);
+  const storedRequestHeaders = sanitizeRequestHeaders(requestHeaders);
 
   await db.insert(deliveryAttempts).values({
     deliveryId: delivery.id,
     attemptNumber,
     responseStatus,
-    responseBody: responseBody?.slice(0, 10_000) ?? null,
+    responseBody: storedResponseBody,
     responseTimeMs,
     error,
-    requestHeaders,
+    requestHeaders: storedRequestHeaders,
   });
 
   if (failureClass === "success") {
@@ -158,7 +140,7 @@ export async function processDelivery(
         attemptCount: attemptNumber,
         deliveredAt: new Date(),
         lastResponseStatus: responseStatus,
-        lastResponseBody: responseBody?.slice(0, 5000) ?? null,
+        lastResponseBody: storedResponseBody,
         lastResponseTimeMs: responseTimeMs,
         updatedAt: new Date(),
       })
@@ -189,7 +171,7 @@ export async function processDelivery(
         status: "failed",
         attemptCount: attemptNumber,
         lastResponseStatus: responseStatus,
-        lastResponseBody: responseBody?.slice(0, 5000) ?? null,
+        lastResponseBody: storedResponseBody,
         lastResponseTimeMs: responseTimeMs,
         lastError,
         updatedAt: new Date(),
@@ -216,7 +198,7 @@ export async function processDelivery(
         status: "dead_lettered",
         attemptCount: attemptNumber,
         lastResponseStatus: responseStatus,
-        lastResponseBody: responseBody?.slice(0, 5000) ?? null,
+        lastResponseBody: storedResponseBody,
         lastResponseTimeMs: responseTimeMs,
         lastError,
         updatedAt: new Date(),
@@ -251,7 +233,7 @@ export async function processDelivery(
       attemptCount: attemptNumber,
       nextRetryAt,
       lastResponseStatus: responseStatus,
-      lastResponseBody: responseBody?.slice(0, 5000) ?? null,
+      lastResponseBody: storedResponseBody,
       lastResponseTimeMs: responseTimeMs,
       lastError,
       updatedAt: new Date(),

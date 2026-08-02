@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateIngestBody } from "../../lib/validate-ingest";
 
-describe("validateIngestBody", () => {
+describe("validateIngestBody (api re-export)", () => {
   it("accepts a valid ingest payload", () => {
     const result = validateIngestBody({
       event_type: "order.created",
@@ -23,31 +23,21 @@ describe("validateIngestBody", () => {
 
   it("rejects missing event_type", () => {
     const result = validateIngestBody({ payload: {} });
-    expect(result).toEqual({ ok: false, error: "event_type is required" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+      expect(result.error).toContain("event_type");
+    }
   });
 
   it("rejects non-object payload", () => {
-    expect(validateIngestBody({ event_type: "x", payload: "bad" })).toEqual({
-      ok: false,
-      error: "payload is required and must be an object",
-    });
-    expect(validateIngestBody(null)).toEqual({
-      ok: false,
-      error: "payload is required and must be an object",
-    });
+    expect(validateIngestBody({ event_type: "x", payload: "bad" }).ok).toBe(false);
+    expect(validateIngestBody(null).ok).toBe(false);
   });
 
   it("rejects invalid idempotency_key and metadata types", () => {
-    expect(
-      validateIngestBody({ event_type: "x", payload: {}, idempotency_key: 123 })
-    ).toEqual({ ok: false, error: "idempotency_key must be a string" });
-
-    expect(
-      validateIngestBody({ event_type: "x", payload: {}, idempotency_key: "   " })
-    ).toEqual({ ok: false, error: "idempotency_key must not be empty" });
-
-    expect(
-      validateIngestBody({ event_type: "x", payload: {}, metadata: "bad" })
-    ).toEqual({ ok: false, error: "metadata must be an object" });
+    expect(validateIngestBody({ event_type: "x", payload: {}, idempotency_key: 123 }).ok).toBe(false);
+    expect(validateIngestBody({ event_type: "x", payload: {}, idempotency_key: "   " }).ok).toBe(false);
+    expect(validateIngestBody({ event_type: "x", payload: {}, metadata: "bad" }).ok).toBe(false);
   });
 });

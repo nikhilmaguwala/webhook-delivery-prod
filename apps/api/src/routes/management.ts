@@ -14,6 +14,9 @@ import {
   generateSecret,
   hashApiKey,
   MAX_RETRY_ATTEMPTS,
+  redactSensitiveText,
+  sanitizeRequestHeaders,
+  DELIVERY_LIMITS,
   slugify,
   type QueueMessage,
 } from "@webhook-delivery/shared";
@@ -26,6 +29,25 @@ import { validateWebhookUrl } from "../lib/ssrf";
 import type { AppEnv } from "../types";
 
 const management = new Hono<AppEnv>();
+
+function sanitizeAttemptForResponse(attempt: typeof deliveryAttempts.$inferSelect) {
+  return {
+    ...attempt,
+    responseBody: attempt.responseBody
+      ? redactSensitiveText(attempt.responseBody).slice(0, DELIVERY_LIMITS.maxStoredResponseBodyLength)
+      : null,
+    requestHeaders: sanitizeRequestHeaders((attempt.requestHeaders as Record<string, string> | null) ?? {}),
+  };
+}
+
+function sanitizeDeliveryForResponse(delivery: typeof deliveries.$inferSelect) {
+  return {
+    ...delivery,
+    lastResponseBody: delivery.lastResponseBody
+      ? redactSensitiveText(delivery.lastResponseBody).slice(0, DELIVERY_LIMITS.maxStoredResponseBodyLength)
+      : null,
+  };
+}
 
 async function verifyOrgAccess(
   db: AppEnv["Variables"]["db"],
@@ -406,7 +428,7 @@ management.get("/deliveries/:deliveryId", async (c) => {
     .limit(1);
 
   return c.json({
-    delivery: delivery.delivery,
+    delivery: sanitizeDeliveryForResponse(delivery.delivery),
     event: {
       id: delivery.event.id,
       event_type: delivery.event.eventType,
@@ -419,7 +441,7 @@ management.get("/deliveries/:deliveryId", async (c) => {
       url: delivery.endpoint.url,
       status: delivery.endpoint.status,
     },
-    attempts,
+    attempts: attempts.map(sanitizeAttemptForResponse),
     dead_letter: dlq ?? null,
   });
 });

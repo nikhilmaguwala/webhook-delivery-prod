@@ -207,6 +207,45 @@ describe.skipIf(!hasDatabase)("ingest integration", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "event_type is required" });
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("event_type");
+  });
+
+  it("rejects invalid event type formats", async () => {
+    const db = await createTestDb();
+    const fixture = await seedProjectFixture(db);
+
+    const response = await requestApp("/v1/ingest/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ event_type: "invalid type!", payload: { ok: true } }),
+      env,
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects oversized request bodies with 413", async () => {
+    const db = await createTestDb();
+    const fixture = await seedProjectFixture(db);
+    const hugePayload = JSON.stringify({
+      event_type: "test.event",
+      payload: { data: "x".repeat(300_000) },
+    });
+
+    const response = await requestApp("/v1/ingest/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: hugePayload,
+      env,
+    });
+
+    expect(response.status).toBe(413);
   });
 });

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
+import { parseIngestJson, validateIngestBody } from "@webhook-delivery/shared";
 import { ingestEvent, resolveIdempotencyKey } from "../lib/ingest-event";
-import { validateIngestBody } from "../lib/validate-ingest";
 import type { AppEnv } from "../types";
 
 const ingest = new Hono<AppEnv>();
@@ -9,16 +9,15 @@ ingest.post("/events", async (c) => {
   const projectId = c.get("projectId")!;
   const db = c.get("db");
 
-  let rawBody: unknown;
-  try {
-    rawBody = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+  const rawText = await c.req.text();
+  const parsed = parseIngestJson(rawText);
+  if (!parsed.ok) {
+    return c.json({ error: parsed.error }, parsed.status);
   }
 
-  const validation = validateIngestBody(rawBody);
+  const validation = validateIngestBody(parsed.body, { bodyBytes: parsed.bodyBytes });
   if (!validation.ok) {
-    return c.json({ error: validation.error }, 400);
+    return c.json({ error: validation.error }, validation.status);
   }
 
   const body = validation.data;

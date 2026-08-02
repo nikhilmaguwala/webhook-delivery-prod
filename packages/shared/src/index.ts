@@ -34,6 +34,27 @@ export function isSuccessStatus(status: number): boolean {
 }
 
 export { classifyDeliveryFailure, type DeliveryFailureClass } from "./retry-classification";
+export {
+  INGEST_LIMITS,
+  DELIVERY_LIMITS,
+  getJsonDepth,
+  countJsonKeys,
+  getSerializedJsonSize,
+} from "./limits";
+export {
+  ingestEventSchema,
+  validateIngestBody,
+  parseIngestJson,
+  type ValidatedIngestEvent,
+  type IngestValidationResult,
+} from "./ingest-validation";
+export {
+  prepareStoredResponseBody,
+  redactSensitiveText,
+  sanitizeRequestHeaders,
+  getResponseBodyRetention,
+} from "./response-body";
+export { executeWebhookFetch, type WebhookFetchResult } from "./delivery-http";
 
 export async function signPayload(
   payload: string,
