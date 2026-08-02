@@ -51,6 +51,20 @@ export async function signPayload(
     .join("");
 }
 
+export async function verifyPayload(
+  payload: string,
+  secret: string,
+  expectedHex: string
+): Promise<boolean> {
+  const actual = await signPayload(payload, secret);
+  if (actual.length !== expectedHex.length) return false;
+  let diff = 0;
+  for (let i = 0; i < actual.length; i++) {
+    diff |= actual.charCodeAt(i) ^ expectedHex.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 export async function hashApiKey(key: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(key);

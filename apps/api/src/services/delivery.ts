@@ -13,15 +13,18 @@ import {
   type QueueMessage,
   type WebhookPayload,
 } from "@webhook-delivery/shared";
+import { createDb, type Database } from "@webhook-delivery/db";
 import { eq } from "drizzle-orm";
-import { createDb } from "@webhook-delivery/db";
+import { computeEndpointHealthStatus } from "../lib/endpoint-health";
+import { isRedirectStatus, validateWebhookUrl } from "../lib/ssrf";
 import type { Env } from "../types";
 
 export async function processDelivery(
   message: QueueMessage,
-  env: Env
+  env: Env,
+  dbOverride?: Database
 ): Promise<void> {
-  const db = createDb(env.DATABASE_URL);
+  const db = dbOverride ?? createDb(env.DATABASE_URL);
 
   const [delivery] = await db
     .select({
@@ -82,6 +85,33 @@ export async function processDelivery(
     "X-Webhook-Attempt": String(attemptNumber),
   };
 
+  const urlValidation = await validateWebhookUrl(endpoint.url, {
+    environment: env.ENVIRONMENT,
+  });
+
+  if (!urlValidation.ok) {
+    await db.insert(deliveryAttempts).values({
+      deliveryId: delivery.id,
+      attemptNumber,
+      responseStatus: null,
+      responseBody: null,
+      responseTimeMs: 0,
+      error: urlValidation.error,
+      requestHeaders: {},
+    });
+
+    await db
+      .update(deliveries)
+      .set({
+        status: "failed",
+        attemptCount: attemptNumber,
+        lastError: urlValidation.error,
+        updatedAt: new Date(),
+      })
+      .where(eq(deliveries.id, delivery.id));
+    return;
+  }
+
   const startTime = Date.now();
   let responseStatus: number | null = null;
   let responseBody: string | null = null;
@@ -91,16 +121,25 @@ export async function processDelivery(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
 
-    const response = await fetch(endpoint.url, {
-      method: "POST",
-      headers: requestHeaders,
-      body,
-      signal: controller.signal,
-    });
+    try {
+      const response = await fetch(urlValidation.normalizedUrl, {
+        method: "POST",
+        headers: requestHeaders,
+        body,
+        signal: controller.signal,
+        redirect: "manual",
+      });
 
-    clearTimeout(timeout);
-    responseStatus = response.status;
-    responseBody = await response.text().catch(() => null);
+      responseStatus = response.status;
+      responseBody = await response.text().catch(() => null);
+
+      if (isRedirectStatus(response.status)) {
+        error = `Redirects are not followed (received HTTP ${response.status})`;
+        responseStatus = null;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch (err) {
     error = err instanceof Error ? err.message : "Unknown error";
   }
@@ -151,9 +190,7 @@ export async function processDelivery(
   }
 
   const newFailures = endpoint.consecutiveFailures + 1;
-  let endpointStatus: "healthy" | "degraded" | "unhealthy" = "healthy";
-  if (newFailures >= 10) endpointStatus = "unhealthy";
-  else if (newFailures >= 3) endpointStatus = "degraded";
+  const endpointStatus = computeEndpointHealthStatus(newFailures);
 
   if (attemptNumber >= delivery.maxAttempts) {
     await db

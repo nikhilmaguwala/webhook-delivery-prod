@@ -12,10 +12,16 @@
     "db:migrate": "pnpm --filter @webhook-delivery/db migrate",
     "db:studio": "pnpm --filter @webhook-delivery/db studio",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:unit": "vitest run --exclude **/integration/**",
+    "test:integration": "vitest run apps/api/src/__tests__/integration"
   },
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "devDependencies": {
+    "vitest": "^3.0.5"
+  }
 }

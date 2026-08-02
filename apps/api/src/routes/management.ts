@@ -22,6 +22,7 @@ import { Hono } from "hono";
 import { getClientIp } from "../middleware/db";
 import { logAudit } from "../services/audit";
 import { canManageProject, getProjectAccess } from "../services/project-access";
+import { validateWebhookUrl } from "../lib/ssrf";
 import type { AppEnv } from "../types";
 
 const management = new Hono<AppEnv>();
@@ -146,10 +147,11 @@ management.post("/projects/:projectId/endpoints", async (c) => {
     return c.json({ error: "url is required" }, 400);
   }
 
-  try {
-    new URL(body.url);
-  } catch {
-    return c.json({ error: "Invalid URL" }, 400);
+  const urlValidation = await validateWebhookUrl(body.url, {
+    environment: c.env.ENVIRONMENT,
+  });
+  if (!urlValidation.ok) {
+    return c.json({ error: urlValidation.error }, 400);
   }
 
   const secret = generateSecret();
@@ -157,7 +159,7 @@ management.post("/projects/:projectId/endpoints", async (c) => {
     .insert(webhookEndpoints)
     .values({
       projectId,
-      url: body.url,
+      url: urlValidation.normalizedUrl,
       description: body.description ?? null,
       secret,
     })
@@ -202,7 +204,15 @@ management.patch("/endpoints/:endpointId", async (c) => {
 
   const updates: Partial<typeof webhookEndpoints.$inferInsert> = { updatedAt: new Date() };
   if (body.enabled !== undefined) updates.enabled = body.enabled;
-  if (body.url) updates.url = body.url;
+  if (body.url) {
+    const urlValidation = await validateWebhookUrl(body.url, {
+      environment: c.env.ENVIRONMENT,
+    });
+    if (!urlValidation.ok) {
+      return c.json({ error: urlValidation.error }, 400);
+    }
+    updates.url = urlValidation.normalizedUrl;
+  }
   if (body.description !== undefined) updates.description = body.description;
 
   const [updated] = await db

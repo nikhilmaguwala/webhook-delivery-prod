@@ -7,7 +7,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
@@ -20,7 +22,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241218.0",
+    "@types/pg": "^8.11.11",
+    "pg": "^8.13.1",
     "typescript": "^5.7.2",
+    "vitest": "^3.0.5",
     "wrangler": "^3.99.0"
   }
 }

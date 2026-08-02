@@ -2,6 +2,7 @@ import { events, deliveries, webhookEndpoints } from "@webhook-delivery/db";
 import { MAX_RETRY_ATTEMPTS, type QueueMessage } from "@webhook-delivery/shared";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { validateIngestBody } from "../lib/validate-ingest";
 import type { AppEnv } from "../types";
 
 const ingest = new Hono<AppEnv>();
@@ -10,26 +11,19 @@ ingest.post("/events", async (c) => {
   const projectId = c.get("projectId")!;
   const db = c.get("db");
 
-  let body: {
-    event_type?: string;
-    payload?: Record<string, unknown>;
-    idempotency_key?: string;
-    metadata?: Record<string, unknown>;
-  };
-
+  let rawBody: unknown;
   try {
-    body = await c.req.json();
+    rawBody = await c.req.json();
   } catch {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
 
-  if (!body.event_type || typeof body.event_type !== "string") {
-    return c.json({ error: "event_type is required" }, 400);
+  const validation = validateIngestBody(rawBody);
+  if (!validation.ok) {
+    return c.json({ error: validation.error }, 400);
   }
 
-  if (!body.payload || typeof body.payload !== "object") {
-    return c.json({ error: "payload is required and must be an object" }, 400);
-  }
+  const body = validation.data;
 
   if (body.idempotency_key) {
     const [existing] = await db
