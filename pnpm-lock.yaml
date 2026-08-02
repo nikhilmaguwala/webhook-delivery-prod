@@ -106,6 +106,10 @@ importers:
         version: 5.9.3
 
   packages/shared:
+    dependencies:
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -1972,6 +1976,9 @@ packages:
   zod@3.22.3:
     resolution: {integrity: sha512-EjIevzuJRiRPbVH4mGc8nApb/lVLKVpmUhAaR5R5doKGfAnGJ6Gr3CViAVjP+4FWSxCsybeWQdcgCtbX+7oZug==}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@cloudflare/kv-asset-handler@0.3.4':
@@ -3431,3 +3438,5 @@ snapshots:
       stacktracey: 2.2.0
 
   zod@3.22.3: {}
+
+  zod@3.25.76: {}
