@@ -174,6 +174,36 @@ class ApiClient {
     );
   }
 
+  sendPasswordResetOtp(email: string, options?: { resend?: boolean }) {
+    return this.request<{
+      message: string;
+      email: string;
+      delivered?: boolean;
+      provider?: string;
+      fallback_otp?: string;
+    }>(
+      "/v1/auth/forgot-password",
+      { method: "POST", body: JSON.stringify({ email, ...options }) },
+      false
+    );
+  }
+
+  verifyPasswordResetOtp(email: string, otp: string) {
+    return this.request<{ message: string; email: string; reset_token: string }>(
+      "/v1/auth/verify-reset-otp",
+      { method: "POST", body: JSON.stringify({ email, otp }) },
+      false
+    );
+  }
+
+  resetPassword(email: string, resetToken: string, password: string) {
+    return this.request<{ message: string; token: string; user: User }>(
+      "/v1/auth/reset-password",
+      { method: "POST", body: JSON.stringify({ email, reset_token: resetToken, password }) },
+      false
+    );
+  }
+
   me() {
     return this.request<{ user: User; organizations: Organization[] }>("/v1/auth/me");
   }

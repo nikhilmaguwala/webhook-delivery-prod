@@ -70,6 +70,9 @@ export default function LoginPage() {
                 placeholder="••••••••"
               />
             </div>
+            <p className="auth-inline-link">
+              <Link href="/forgot-password">Forgot password?</Link>
+            </p>
             <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
             </button>
